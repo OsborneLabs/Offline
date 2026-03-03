@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      1.0.0
-// @description  Downloads Lezhin chapters for offline reading
+// @version      1.0.1
+// @description  Downloads Lezhin chapters as ZIP files for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
 // @homepageURL  https://github.com/OsborneLabs/Offline
@@ -20,10 +20,12 @@
 // @match        https://*.bomtoon.tw/*
 // @match        https://*.boomtoon.com/*
 // @run-at       document-start
-// @supportURL   https://github.com/OsborneLabs/Offline/issues
-// @require      https://cdn.jsdelivr.net/npm/fflate@0.8/umd/index.min.js
 // @connect      ccdn.lezhin.com
 // @connect      rcdn.lezhin.com
+// @supportURL   https://github.com/OsborneLabs/Offline/issues
+// @require      https://cdn.jsdelivr.net/npm/fflate@0.8/umd/index.min.js
+// @downloadURL  https://update.greasyfork.org/scripts/568060/Offline%20for%20Lezhin.user.js
+// @updateURL    https://update.greasyfork.org/scripts/568060/Offline%20for%20Lezhin.meta.js
 // @grant        GM_xmlhttpRequest
 // ==/UserScript==
 
@@ -1072,6 +1074,14 @@
                 Submit an issue
                 </a>
             </div>
+            <div class="download-popup-links">
+                <a href="https://greasyfork.org/en/scripts/568060-offline-for-lezhin" 
+                target="_blank" 
+                rel="noopener noreferrer" 
+                style="text-decoration: underline;">
+                Update
+                </a>
+            </div>
         `;
         document.body.appendChild(popup);
         let showTimer = null;
@@ -1091,17 +1101,17 @@
         btn.addEventListener('mouseenter', () => {
             if (btn.disabled) return;
             clearTimeout(hideTimer);
-            showTimer = setTimeout(showPopup, 1100);
+            showTimer = setTimeout(showPopup, 1000);
         });
         btn.addEventListener('mouseleave', () => {
             clearTimeout(showTimer);
-            hideTimer = setTimeout(hidePopup, 50);
+            hideTimer = setTimeout(hidePopup, 25);
         });
         popup.addEventListener('mouseenter', () => {
             clearTimeout(hideTimer);
         });
         popup.addEventListener('mouseleave', () => {
-            hideTimer = setTimeout(hidePopup, 50);
+            hideTimer = setTimeout(hidePopup, 25);
         });
     }
 
