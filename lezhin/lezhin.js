@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      1.0.1
-// @description  Downloads Lezhin chapters as ZIP files for offline reading
+// @version      1.1.0
+// @description  Downloads and saves Lezhin chapter images to a ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
 // @homepageURL  https://github.com/OsborneLabs/Offline
@@ -125,6 +125,10 @@
         MOBILE_DEVICES_NOT_SUPPORTED: {
             code: 'mobile-devices-not-supported',
             message: 'Mobile devices are not supported'
+        },
+        NO_IMAGES_COLLECTED: {
+            code: 'no-images-collected',
+            message: 'No images were collected'
         },
         TOTAL_PAGE_COUNT_NOT_FOUND: {
             code: 'total-page-count-not-found',
@@ -472,8 +476,12 @@
     }
 
     function isHorizontalViewerLayout() {
-        return !!document.querySelector('[class^="pageView__cutWrap"]') &&
-            !!document.querySelector('button[class*="nav--right"]');
+        const {
+            horizontalWrapper,
+            horizontalNavNext
+        } = RENDER_PAGE_SELECTORS_HORIZONTAL;
+        return !!document.querySelector(horizontalWrapper) &&
+            !!document.querySelector(horizontalNavNext);
     }
 
     function getViewerLayoutConfig() {
@@ -1199,10 +1207,24 @@
         return collectedCount === expected;
     }
 
-    function assertCollectedPageCount(count) {
-        if (!validateCollectedPageCount(count)) {
-            throwDownloadError(DOWNLOAD_ERROR_MAP.IMAGE_COUNT_MISMATCH);
+    function validateCollectedImages(session, images) {
+        if (session.cancelled) {
+            throwDownloadError('DOWNLOAD_ABORTED');
         }
+        if (!images || !images.length) {
+            console.debug(
+                `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - NO IMAGES COLLECTED`
+            );
+            throwDownloadError('NO_IMAGES_COLLECTED');
+        }
+        const isValidCount = validateCollectedPageCount(images.length);
+        if (!isValidCount) {
+            console.debug(
+                `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - IMAGE COUNT MISMATCH`
+            );
+            throwDownloadError('IMAGE_COUNT_MISMATCH');
+        }
+        return images;
     }
 
     function findMissingPages(collectedMap) {
@@ -1989,17 +2011,10 @@
         state.ui.activeDownload = session;
         const headerOverrideStyle = applyViewerHeaderOverride();
         btn.disabled = true;
-        const setLabel = label =>
-            updateDownloadButton(btn, label);
-        const onCollect = c =>
-            setLabel(UI_BUTTON_LABELS.COLLECTING(c));
+        const setLabel = label => updateDownloadButton(btn, label);
+        const onCollect = c => setLabel(UI_BUTTON_LABELS.COLLECTING(c));
         const onConvert = (c, t) =>
             setLabel(UI_BUTTON_LABELS.CONVERTING(c, t));
-        const abortIfInvalid = (data) => {
-            if (session.cancelled || !data || !data.length) {
-                throwDownloadError('DOWNLOAD_ABORTED');
-            }
-        };
         const finalizeZip = async (zip, donePromise) => {
             try {
                 zip.end();
@@ -2009,7 +2024,10 @@
             }
         };
         const createZipInstance = () =>
-            createStreamingZip(getSeriesTitle(), getSeriesChapter());
+            createStreamingZip(
+                getSeriesTitle(),
+                getSeriesChapter()
+            );
         setLabel(UI_BUTTON_LABELS.COLLECTING(0));
         await new Promise(requestAnimationFrame);
         let completed = false;
@@ -2023,10 +2041,16 @@
                 const images = isHorizontalViewerLayout() ?
                     await collectHorizontalWebpPages(session, onCollect) :
                     await collectWebpPages(session, onCollect);
-                abortIfInvalid(images);
-                await retryMissingPages(session, state.ui.images, onCollect);
-                const finalImages = getOrderedWebpPageList();
-                assertCollectedPageCount(finalImages.length);
+                validateCollectedImages(session, images);
+                await retryMissingPages(
+                    session,
+                    state.ui.images,
+                    onCollect
+                );
+                const finalImages = validateCollectedImages(
+                    session,
+                    getOrderedWebpPageList()
+                );
                 state.ui.phase = 'downloading';
                 files = await convertWebpPagesToJpeg(
                     session,
@@ -2035,20 +2059,27 @@
                 );
             }
             if (renderType === 'canvas') {
-                const pages = await collectCanvasPages(session, onCollect);
-                abortIfInvalid(pages);
-                assertCollectedPageCount(pages.length);
+                const pages = await collectCanvasPages(
+                    session,
+                    onCollect
+                );
+                const validPages = validateCollectedImages(
+                    session,
+                    pages
+                );
                 state.ui.phase = 'downloading';
                 const {
                     zip,
                     donePromise
-                } = createZipInstance();
-                const success = await streamCanvasImagesToZip(
-                    session,
-                    pages,
-                    zip,
-                    onConvert
-                );
+                } =
+                createZipInstance();
+                const success =
+                    await streamCanvasImagesToZip(
+                        session,
+                        validPages,
+                        zip,
+                        onConvert
+                    );
                 if (!success) {
                     throwDownloadError('DOWNLOAD_ABORTED');
                 }
@@ -2066,18 +2097,26 @@
                         const blob = new Blob([data], {
                             type: 'image/png'
                         });
-                        const url = URL.createObjectURL(blob);
+                        const url =
+                            URL.createObjectURL(blob);
                         const img = new Image();
                         img.src = url;
                         state.blob.pages.set(index, img);
                     }
                     state.blob.enabled = true;
                     state.blob.buffer.clear();
-                    await collectBlobPages(session, onCollect);
+                    await collectBlobPages(
+                        session,
+                        onCollect
+                    );
                 }
                 const orderedImages =
-                    getOrderedBlobPageList(state.blob.pages);
-                assertCollectedPageCount(orderedImages.length);
+                    validateCollectedImages(
+                        session,
+                        getOrderedBlobPageList(
+                            state.blob.pages
+                        )
+                    );
                 state.ui.phase = 'downloading';
                 files = await buildBlobImageFiles(
                     session,
@@ -2089,18 +2128,24 @@
                 if (session.cancelled || !files) {
                     throwDownloadError('DOWNLOAD_ABORTED');
                 }
+                if (!Object.keys(files).length) {
+                    throwDownloadError('NO_IMAGES_COLLECTED');
+                }
                 const {
                     zip,
                     donePromise
-                } = createZipInstance();
+                } =
+                createZipInstance();
                 const entries = Object.entries(files);
                 let completedCount = 0;
                 const total = entries.length;
                 for (const [name, data] of entries) {
                     if (session.cancelled) break;
-                    const file = new fflate.ZipDeflate(name, {
-                        level: 6
-                    });
+                    const file = new fflate.ZipDeflate(
+                        name, {
+                            level: 6
+                        }
+                    );
                     zip.add(file);
                     file.push(data, true);
                     completedCount++;
@@ -2126,8 +2171,16 @@
             if (headerOverrideStyle) {
                 headerOverrideStyle.remove();
             }
-            if (completed && !sessionStorage.getItem(UI_AUTO_REFRESH_FLAG)) {
-                sessionStorage.setItem(UI_AUTO_REFRESH_FLAG, '1');
+            if (
+                completed &&
+                !sessionStorage.getItem(
+                    UI_AUTO_REFRESH_FLAG
+                )
+            ) {
+                sessionStorage.setItem(
+                    UI_AUTO_REFRESH_FLAG,
+                    '1'
+                );
                 window.scrollTo({
                     top: 0,
                     behavior: 'smooth'
