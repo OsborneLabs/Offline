@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      1.1.0
+// @version      1.1.1
 // @description  Downloads and saves Lezhin chapter images to a ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
@@ -41,7 +41,7 @@
         GM_info.script.version :
         'unknown';
     const UI_AUTO_REFRESH_FLAG = 'autoRefresh';
-    const UI_TOAST_DURATION_MS = 8000;
+    const UI_TOAST_DURATION_MS = 6000;
     const UI_BUTTON_RESET_DELAY_MS = 3000;
     const UI_BUTTON_LABELS = {
         DEFAULT: 'Download',
@@ -124,7 +124,7 @@
         },
         MOBILE_DEVICES_NOT_SUPPORTED: {
             code: 'mobile-devices-not-supported',
-            message: 'Mobile devices are not supported'
+            message: 'Offline mobile not supported'
         },
         NO_IMAGES_COLLECTED: {
             code: 'no-images-collected',
@@ -198,7 +198,9 @@
                 --color-app-button-disabled: #FF5254;
                 --color-app-button-popup-default: #1F1F1F;
                 --color-app-text-default: white;
+                --size-app-button-height: 28px;
                 --size-text-body-default: 13px;
+                --size-text-toast-default: 14px;
                 --size-text-popup-default: 12px;
             }
             @keyframes toast-slide-in {
@@ -240,7 +242,7 @@
                 max-width: 360px;
                 padding: 10px 14px;
                 border-radius: 16px;
-                font-size: 14px;
+                font-size: var(--size-text-toast-default);
                 color: white;
                 background: var(--color-app-button-default);
                 box-shadow: 0 2px 12px rgba(0,0,0,0.25);
@@ -267,7 +269,7 @@
                 display: inline-flex;
                 align-items: center;
                 justify-content: center;
-                height: 28px;
+                height: var(--size-app-button-height);
                 padding: 6px 10px;
                 border: none;
                 border-radius: 20px;
@@ -1075,17 +1077,17 @@
                 v${SCRIPT_VERSION}
             </div>
             <div class="download-popup-links">
-                <a href="https://github.com/OsborneLabs/Offline/issues" 
-                target="_blank" 
-                rel="noopener noreferrer" 
+                <a href="https://github.com/OsborneLabs/Offline/issues"
+                target="_blank"
+                rel="noopener noreferrer"
                 style="text-decoration: underline;">
                 Submit an issue
                 </a>
             </div>
             <div class="download-popup-links">
-                <a href="https://greasyfork.org/en/scripts/568060-offline-for-lezhin" 
-                target="_blank" 
-                rel="noopener noreferrer" 
+                <a href="https://greasyfork.org/en/scripts/568060-offline-for-lezhin"
+                target="_blank"
+                rel="noopener noreferrer"
                 style="text-decoration: underline;">
                 Update
                 </a>

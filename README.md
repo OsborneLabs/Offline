@@ -23,7 +23,7 @@ Offline runs on these sites
       </a>
     </td>
     <td>
-      <img src="https://img.shields.io/badge/Version-v1.1.0-blue?style=for-the-badge">
+      <img src="https://img.shields.io/badge/Version-v1.1.1-blue?style=for-the-badge">
       <img src="https://img.shields.io/badge/Status-Stable-brightgreen?style=for-the-badge">
     </td>
   </tr>
