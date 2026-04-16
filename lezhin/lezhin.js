@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      1.1.1
+// @version      1.2.0
 // @description  Downloads and saves Lezhin chapter images to a ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
@@ -56,7 +56,7 @@
     ];
 
     const VIEWER_ROUTE_REGEX_JP =
-        /^\/comic\/([^\/]+)\/chapter\/([^\/]+)\/viewer\/?$/;
+        /^\/comic\/([^\/]+)\/(?:chapter|volume)\/([^\/]+)\/viewer\/?$/;
 
     const RENDER_DETECTORS = {
         webp: {
@@ -93,17 +93,32 @@
     };
 
     const RENDER_PAGE_SELECTORS_HORIZONTAL = {
-        horizontalWrapper: 'div[class^="pageView__cutWrap"]',
-        horizontalNavNext: 'button[class*="nav--right"]'
+        kr: {
+            horizontalWrapper: 'div[class^="pageView__cutWrap"]',
+            horizontalNavNext: 'button[class*="nav--right"]'
+        },
+        jp: {
+            horizontalWrapper: 'div[class^="HorizontalViewer_root__"]',
+            spread: 'div[class^="Spread_spread__"]',
+        }
     };
 
     const RENDER_PAGE_SELECTORS = [
-        RENDER_PAGE_SELECTORS_HORIZONTAL.horizontalWrapper,
+        RENDER_PAGE_SELECTORS_HORIZONTAL.kr.horizontalWrapper,
+        '.scroll-view > [data-cut-index]',
         'div[class^="ImageContainer__Container-"]',
         'div[class^="sc-"][width][height]',
         'div[class^="scrollViewCut__"]',
         'div[class^="VerticalViewer_page_container"]'
     ];
+
+    const UI_PAGE_SELECTORS = {
+        footer: 'div[class^="Footer_footerContainer__"]',
+        sliders: [
+            'input[type="range"][max]',
+            '[class^="lzSlider__"] button[data-max]'
+        ]
+    };
 
     const DOWNLOAD_ERROR_MAP = {
         BLOB_CAPTURE_FAILED: {
@@ -160,12 +175,10 @@
     }
 
     const state = {
-        ui: {
-            isDownloading: false,
-            phase: 'idle',
-            activeDownload: null,
-            spaNavigated: false,
-            images: new Map()
+        blob: {
+            enabled: false,
+            buffer: new Map(),
+            pages: new Map()
         },
         canvas: {
             enabled: false,
@@ -175,17 +188,19 @@
             buffer: new Map(),
             pages: new Map()
         },
-        blob: {
-            enabled: false,
-            buffer: new Map(),
-            pages: new Map()
-        },
         viewer: {
             detected: false,
             type: null,
             url: null,
             initialRenderingLogged: false,
             notFoundToastShown: false
+        },
+        ui: {
+            isDownloading: false,
+            phase: 'idle',
+            activeDownload: null,
+            spaNavigated: false,
+            images: new Map()
         }
     };
 
@@ -222,6 +237,12 @@
                     opacity: 0;
                     transform: translateY(-10px);
                 }
+            }
+            #overlay.lzModal {
+                display: none !important;
+                visibility: hidden !important;
+                opacity: 0 !important;
+                pointer-events: none !important;
             }
             #lezhin-toast-container {
                 display: flex;
@@ -344,6 +365,7 @@
         sessionStorage.removeItem(UI_AUTO_REFRESH_FLAG);
         createStyles();
         observeURLMutation();
+        disableSiteTelemetry();
         initDownloadButtonObserver();
         initCanvasDrawHook();
         initBlobBackgroundCollector();
@@ -461,13 +483,15 @@
             /(^|\.)lezhinx\.com$/.test(location.hostname);
         let viewerRegex;
         if (usesStringChapterId) {
-            viewerRegex = /^\/viewer\/[^\/]+\/[^\/]+\/?$/;
+            viewerRegex = /^\/viewer\/[^\/]+\/[a-zA-Z0-9_-]+\/?$/;
         } else {
             viewerRegex = /^\/viewer\/[^\/]+\/\d+\/?$/;
         }
+        const chapterViewerRegex =
+            /^\/comic\/[^\/]+\/(?:chapter|volume)\/[a-zA-Z0-9_-]+\/viewer\/?$/;
         return (
             /^\/(?:[a-z]{2}\/)?comic\/[^\/]+\/[^\/]+\/?$/.test(url) ||
-            /^\/comic\/[^\/]+\/chapter\/[^\/]+\/viewer\/?$/.test(url) ||
+            chapterViewerRegex.test(url) ||
             viewerRegex.test(url)
         );
     }
@@ -479,11 +503,22 @@
 
     function isHorizontalViewerLayout() {
         const {
+            horizontalWrapper: jpWrapper
+        } = RENDER_PAGE_SELECTORS_HORIZONTAL.jp;
+        if (document.querySelector(jpWrapper)) {
+            return 'jp';
+        }
+        const {
             horizontalWrapper,
             horizontalNavNext
-        } = RENDER_PAGE_SELECTORS_HORIZONTAL;
-        return !!document.querySelector(horizontalWrapper) &&
-            !!document.querySelector(horizontalNavNext);
+        } = RENDER_PAGE_SELECTORS_HORIZONTAL.kr;
+        if (
+            document.querySelector(horizontalWrapper) &&
+            document.querySelector(horizontalNavNext)
+        ) {
+            return 'kr';
+        }
+        return false;
     }
 
     function getViewerLayoutConfig() {
@@ -598,10 +633,11 @@
     function getViewerContainer() {
         const containers = [
             '[class^="CoreViewer_viewer_wrapper__"]',
+            'div.scroll-view',
             'div[class^="ImageContainer__Container"]',
             'div[class^="pageView__"]',
             'div[class^="sc-"]',
-            'div[class^="scrollViewWrapper__"]',
+            'div[class^="scrollViewWrapper__"]'
         ];
         for (const selector of containers) {
             const el = document.querySelector(selector);
@@ -695,23 +731,22 @@
         }
         const sources = [
             () => {
-                const slider = document.querySelector(
-                    'input[type="range"][max]'
-                );
-                if (!slider) return null;
-                const max = Number(slider.max);
-                return Number.isFinite(max) ? max + 1 : null;
-            },
-            () => {
-                const slider = document.querySelector(
-                    '[class^="lzSlider__"] button[data-max]'
-                );
-                const max = slider && Number(slider.dataset.max);
-                return Number.isFinite(max) ? max : null;
+                for (const selector of UI_PAGE_SELECTORS.sliders) {
+                    const el = document.querySelector(selector);
+                    if (!el) continue;
+                    const max =
+                        el.max !== undefined ?
+                        Number(el.max) :
+                        Number(el.dataset?.max);
+                    if (Number.isFinite(max)) {
+                        return el.max !== undefined ? max + 1 : max;
+                    }
+                }
+                return null;
             },
             () => {
                 const footer = document.querySelector(
-                    'div[class^="Footer_footerContainer__"]'
+                    UI_PAGE_SELECTORS.footer
                 );
                 const match = footer?.textContent?.match(/\/\s*(\d+)/);
                 const max = match && Number(match[1]);
@@ -811,7 +846,7 @@
                 regex.test(location.hostname)
             );
             if (!shouldApply) return;
-            if (!document.querySelector(RENDER_PAGE_SELECTORS_HORIZONTAL.horizontalWrapper)) {
+            if (!document.querySelector(RENDER_PAGE_SELECTORS_HORIZONTAL.kr.horizontalWrapper)) {
                 return;
             }
             const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -1214,16 +1249,12 @@
             throwDownloadError('DOWNLOAD_ABORTED');
         }
         if (!images || !images.length) {
-            console.debug(
-                `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - NO IMAGES COLLECTED`
-            );
+            console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - NO IMAGES COLLECTED`);
             throwDownloadError('NO_IMAGES_COLLECTED');
         }
         const isValidCount = validateCollectedPageCount(images.length);
         if (!isValidCount) {
-            console.debug(
-                `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - IMAGE COUNT MISMATCH`
-            );
+            console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - IMAGE COUNT MISMATCH`);
             throwDownloadError('IMAGE_COUNT_MISMATCH');
         }
         return images;
@@ -1334,7 +1365,7 @@
 
     async function collectHorizontalWebpPages(session, onProgress) {
         state.ui.images.clear();
-        const wrapper = document.querySelector(RENDER_PAGE_SELECTORS_HORIZONTAL.horizontalWrapper);
+        const wrapper = document.querySelector(RENDER_PAGE_SELECTORS_HORIZONTAL.kr.horizontalWrapper);
         const sliderBtn = document.querySelector(
             '[role="slider"][data-max][data-value]'
         );
@@ -1723,8 +1754,7 @@
                 const index = i + 1;
                 if (state.blob.pages.has(index)) return;
                 const img = el.querySelector('img[src^="blob:"]');
-                if (!img) return;
-                if (!img.complete) return;
+                if (!img || !img.complete) return;
                 state.blob.pages.set(index, img);
                 console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - BACKGROUND BLOB STORED: ${index}`);
             });
@@ -1839,6 +1869,162 @@
         return state.blob.pages;
     }
 
+    async function collectHorizontalBlobPages(session, onProgress, existing = new Map()) {
+        const footerSelector = UI_PAGE_SELECTORS.footer;
+        const spreadSelector = RENDER_PAGE_SELECTORS_HORIZONTAL.jp.spread;
+        const wrapperSelector = RENDER_PAGE_SELECTORS_HORIZONTAL.jp.horizontalWrapper;
+        let cachedPage = null;
+
+        function getFooterPageNumbers() {
+            const footer = document.querySelector(footerSelector);
+            if (!footer) return null;
+            const spans = footer.querySelectorAll('span');
+            let current = null;
+            let total = null;
+            for (let i = 0; i < spans.length; i++) {
+                const n = Number(spans[i].textContent.trim());
+                if (!Number.isFinite(n) || n <= 0) continue;
+                if (current === null) current = n;
+                else {
+                    total = n;
+                    break;
+                }
+            }
+            if (current !== null && total !== null) {
+                return {
+                    current,
+                    total
+                };
+            }
+            return null;
+        }
+
+        function updateCachedPage() {
+            const data = getFooterPageNumbers();
+            if (data) cachedPage = data.current;
+            return cachedPage;
+        }
+        const getCurrentPageNumber = () => cachedPage ?? updateCachedPage();
+        const getTotalPages = () =>
+            getFooterPageNumbers()?.total ?? getTotalPageCount();
+
+        function dispatchArrowKey(key) {
+            document.dispatchEvent(
+                new KeyboardEvent('keydown', {
+                    key,
+                    code: key,
+                    bubbles: true,
+                    cancelable: true
+                })
+            );
+        }
+
+        function getActiveSpread() {
+            const spreads = document.querySelectorAll(spreadSelector);
+            for (const s of spreads) {
+                const r = s.style.right;
+                if (r === '0%' || r === '0px' || r === '') return s;
+            }
+            return spreads[0] || null;
+        }
+
+        function getActiveImage(spreadEl) {
+            return spreadEl?.querySelector('img[src^="blob:"]') || null;
+        }
+
+        function waitForPageChange(prev, timeout = 3000) {
+            return new Promise(resolve => {
+                const start = performance.now();
+
+                function tick() {
+                    if (session.cancelled) return resolve(false);
+                    const current = updateCachedPage();
+                    if (current !== null && current !== prev) {
+                        return resolve(true);
+                    }
+                    if (performance.now() - start > timeout) {
+                        return resolve(false);
+                    }
+                    requestAnimationFrame(tick);
+                }
+                tick();
+            });
+        }
+
+        function waitForImage(spreadEl, timeout = 3000) {
+            return new Promise(resolve => {
+                const start = performance.now();
+
+                function tick() {
+                    const img = getActiveImage(spreadEl);
+                    if (
+                        img &&
+                        img.src.startsWith('blob:') &&
+                        img.complete &&
+                        img.naturalWidth > 0
+                    ) {
+                        return resolve(img);
+                    }
+                    if (performance.now() - start > timeout) {
+                        return resolve(null);
+                    }
+                    requestAnimationFrame(tick);
+                }
+                tick();
+            });
+        }
+        const wrapper = document.querySelector(wrapperSelector);
+        if (!wrapper || session.cancelled) return new Map();
+        const total = getTotalPages();
+        const result = new Array(total);
+        const seenSrcs = new Set();
+        for (const [index, img] of existing.entries()) {
+            result[index - 1] = img;
+            seenSrcs.add(img.src);
+        }
+        updateCachedPage();
+        let guard = 0;
+        while (guard < total + 5 && !session.cancelled) {
+            const current = getCurrentPageNumber();
+            if (current === 1) break;
+            dispatchArrowKey('ArrowRight');
+            await waitForPageChange(current, 1500);
+            guard++;
+        }
+        await new Promise(r => setTimeout(r, 300));
+        for (let pageNum = 1; pageNum <= total; pageNum++) {
+            if (session.cancelled) break;
+            if (result[pageNum - 1]) continue;
+            let spreadEl = getActiveSpread();
+            let img = null;
+            const MAX_RETRIES = 4;
+            for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+                img = await waitForImage(spreadEl, 3000);
+                if (img) break;
+                await new Promise(r => setTimeout(r, 250));
+                spreadEl = getActiveSpread();
+            }
+            if (!img) {
+                console.warn(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - FAILED TO COLLECT PAGE ${pageNum}`);
+                continue;
+            }
+            if (!seenSrcs.has(img.src)) {
+                seenSrcs.add(img.src);
+                result[pageNum - 1] = img;
+                onProgress(seenSrcs.size);
+            }
+            if (pageNum >= total) break;
+            const prev = getCurrentPageNumber();
+            dispatchArrowKey('ArrowLeft');
+            await waitForPageChange(prev, 3000);
+        }
+        const map = new Map();
+        result.forEach((img, i) => {
+            if (img) map.set(i + 1, img);
+        });
+        return map;
+    }
+
     function getOrderedBlobPageList(blobMap) {
         return [...blobMap.entries()]
             .sort(([a], [b]) => a - b)
@@ -1915,7 +2101,7 @@
         });
         const zip = new fflate.Zip((err, data, final) => {
             if (err) {
-                console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION}: ZIP STREAM ERROR\n`, err);
+                console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION}: ZIP STREAMING ERROR\n`, err);
                 rejectFinal(new Error(
                     DOWNLOAD_ERROR_MAP.ZIP_CREATION_FAILED.code
                 ));
@@ -1937,7 +2123,7 @@
                     setTimeout(() => URL.revokeObjectURL(url), 1000);
                     resolveFinal();
                 } catch (e) {
-                    console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION}: ZIP FINALIZE ERROR\n`, e);
+                    console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION}: ZIP FINALIZING ERROR\n`, e);
                     rejectFinal(new Error(
                         DOWNLOAD_ERROR_MAP.ZIP_CREATION_FAILED.code
                     ));
@@ -2040,7 +2226,7 @@
             await new Promise(r => setTimeout(r, 300));
             let files = null;
             if (renderType === 'webp') {
-                const images = isHorizontalViewerLayout() ?
+                const images = isHorizontalViewerLayout() === 'kr' ?
                     await collectHorizontalWebpPages(session, onCollect) :
                     await collectWebpPages(session, onCollect);
                 validateCollectedImages(session, images);
@@ -2088,43 +2274,65 @@
                 await finalizeZip(zip, donePromise);
             }
             if (renderType === 'blob') {
-                const layout = getViewerLayoutConfig();
-                const expectedCount =
-                    layout.pageSource === 'cuts' ?
-                    getAllPageIndexes().length :
-                    getTotalPageCount();
-                if (state.blob.pages.size !== expectedCount) {
-                    state.blob.pages.clear();
-                    for (const [index, data] of state.blob.buffer) {
-                        const blob = new Blob([data], {
-                            type: 'image/png'
-                        });
-                        const url =
-                            URL.createObjectURL(blob);
-                        const img = new Image();
-                        img.src = url;
-                        state.blob.pages.set(index, img);
-                    }
-                    state.blob.enabled = true;
-                    state.blob.buffer.clear();
-                    await collectBlobPages(
+                if (isHorizontalViewerLayout() === 'jp') {
+                    const preloaded = new Map(state.blob.pages);
+                    const collected = await collectHorizontalBlobPages(
                         session,
-                        onCollect
+                        onCollect,
+                        preloaded
+                    );
+                    for (const [index, img] of collected.entries()) {
+                        preloaded.set(index, img);
+                    }
+                    const orderedImages = validateCollectedImages(
+                        session,
+                        getOrderedBlobPageList(preloaded)
+                    );
+                    state.ui.phase = 'downloading';
+                    files = await buildBlobImageFiles(
+                        session,
+                        orderedImages,
+                        onConvert
+                    );
+                } else {
+                    const layout = getViewerLayoutConfig();
+                    const expectedCount =
+                        layout.pageSource === 'cuts' ?
+                        getAllPageIndexes().length :
+                        getTotalPageCount();
+                    if (state.blob.pages.size !== expectedCount) {
+                        state.blob.pages.clear();
+                        for (const [index, data] of state.blob.buffer) {
+                            const blob = new Blob([data], {
+                                type: 'image/png'
+                            });
+                            const url =
+                                URL.createObjectURL(blob);
+                            const img = new Image();
+                            img.src = url;
+                            state.blob.pages.set(index, img);
+                        }
+                        state.blob.enabled = true;
+                        state.blob.buffer.clear();
+                        await collectBlobPages(
+                            session,
+                            onCollect
+                        );
+                    }
+                    const orderedImages =
+                        validateCollectedImages(
+                            session,
+                            getOrderedBlobPageList(
+                                state.blob.pages
+                            )
+                        );
+                    state.ui.phase = 'downloading';
+                    files = await buildBlobImageFiles(
+                        session,
+                        orderedImages,
+                        onConvert
                     );
                 }
-                const orderedImages =
-                    validateCollectedImages(
-                        session,
-                        getOrderedBlobPageList(
-                            state.blob.pages
-                        )
-                    );
-                state.ui.phase = 'downloading';
-                files = await buildBlobImageFiles(
-                    session,
-                    orderedImages,
-                    onConvert
-                );
             }
             if (renderType !== 'canvas') {
                 if (session.cancelled || !files) {
@@ -2191,6 +2399,115 @@
                     location.reload();
                 }, 700);
             }
+        }
+    }
+
+    function disableSiteTelemetry() {
+        disableSiteTelemetryNetworkRequests();
+    }
+
+    function disableSiteTelemetryNetworkRequests() {
+        if (window.__disableSiteTelemetryRequestsInstalled) return;
+        window.__disableSiteTelemetryRequestsInstalled = true;
+        const TELEMETRY_NETWORK_DOMAINS = [
+            "bizspring.net", "clarity.ms", "creativecdn.com", "criteo.com", "doubleclick.net", "eskimi.com",
+            "googletagmanager.com", "nestads.com"
+        ];
+        const TELEMETRY_NETWORK_HOSTS = [
+            "ad.daum.net", "aem-kakao-collector.onkakao.net", "analytics.google.com", "analytics.tiktok.com",
+            "analytics.twitter.com", "web-sdk-cdn.singular.net",
+        ];
+        const loggedDomains = new Set();
+
+        function getHostname(url) {
+            try {
+                return new URL(url).hostname;
+            } catch {
+                return null;
+            }
+        }
+
+        function shouldBlock(host) {
+            if (!host) return false;
+            if (TELEMETRY_NETWORK_HOSTS.includes(host)) return true;
+            return TELEMETRY_NETWORK_DOMAINS.some(domain =>
+                host === domain || host.endsWith("." + domain)
+            );
+        }
+
+        function logOnce(host, url) {
+            if (!host || loggedDomains.has(host)) return;
+            console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - TELEMETRY REQUEST BLOCKED:`, url);
+            loggedDomains.add(host);
+        }
+
+        function handleBlock(url, type) {
+            const host = getHostname(url);
+            if (shouldBlock(host)) {
+                logOnce(host, url);
+                throw new Error(`blocked-${type}`);
+            }
+            return false;
+        }
+        const origFetch = window.fetch;
+        if (origFetch) {
+            window.fetch = function(resource) {
+                const url = typeof resource === 'string' ?
+                    resource :
+                    resource && resource.url;
+                try {
+                    handleBlock(url, 'fetch');
+                } catch (e) {
+                    return Promise.reject(new TypeError('blocked-request'));
+                }
+                return origFetch.apply(this, arguments);
+            };
+        }
+        const origOpen = XMLHttpRequest.prototype.open;
+        const origSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.open = function(method, url) {
+            const host = getHostname(url);
+            if (shouldBlock(host)) {
+                this.__blocked = true;
+                this.__url = url;
+                this.__host = host;
+            }
+            return origOpen.apply(this, arguments);
+        };
+        XMLHttpRequest.prototype.send = function() {
+            if (this.__blocked) {
+                logOnce(this.__host, this.__url);
+                this.abort();
+                return;
+            }
+            return origSend.apply(this, arguments);
+        };
+        if (navigator.sendBeacon) {
+            const origBeacon = navigator.sendBeacon;
+            navigator.sendBeacon = function(url, data) {
+                const host = getHostname(url);
+                if (shouldBlock(host)) {
+                    logOnce(host, url);
+                    return true;
+                }
+                return origBeacon.apply(this, arguments);
+            };
+        }
+        if (window.WebSocket) {
+            const OrigWebSocket = window.WebSocket;
+            window.WebSocket = function(url, protocols) {
+                handleBlock(url, 'websocket');
+                return new OrigWebSocket(url, protocols);
+            };
+            window.WebSocket.prototype = OrigWebSocket.prototype;
+        }
+        if (window.EventSource) {
+            const OrigEventSource = window.EventSource;
+            window.EventSource = function(url, config) {
+                handleBlock(url, 'eventsource');
+                return new OrigEventSource(url, config);
+            };
+            window.EventSource.prototype = OrigEventSource.prototype;
         }
     }
 
