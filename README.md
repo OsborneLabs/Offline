@@ -1,4 +1,4 @@
-<p align=center><img src="https://www.svgrepo.com/show/507665/download.svg" width="95" height="95"></p>
+<p align=center><img src="https://gist.githubusercontent.com/OsborneLabs/2f07333f722fddbcb5998810148a40d5/raw/70a76e8ab7d07c78af75324462ff691961a08ce9/Offline.svg" width="95" height="95"></p>
 <h1 align=center>Offline</h1><br>
 
 ## Sites
@@ -23,7 +23,7 @@ Offline runs on these sites
       </a>
     </td>
     <td>
-      <img src="https://img.shields.io/badge/Version-v1.2.0-blue?style=for-the-badge">
+      <img src="https://img.shields.io/badge/Version-v1.2.1-blue?style=for-the-badge">
       <img src="https://img.shields.io/badge/Status-Stable-brightgreen?style=for-the-badge">
     </td>
   </tr>

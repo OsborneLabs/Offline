@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      1.2.0
+// @version      1.2.1
 // @description  Downloads and saves Lezhin chapter images to a ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
@@ -288,6 +288,10 @@
             }
             .download-button {
                 display: inline-flex;
+                position: fixed;
+                top: 3.5%;
+                left: 50%;
+                transform: translate(-50%, -50%);
                 align-items: center;
                 justify-content: center;
                 height: var(--size-app-button-height);
@@ -302,17 +306,6 @@
                 cursor: pointer;
                 user-select: none;
                 transition: background-color 0.20s ease;
-            }
-            .download-button-custom {
-                position: relative;
-                bottom: 1px;
-                margin-left: 15px;
-            }
-            .download-button-default {
-                position: fixed;
-                top: 3.5%;
-                left: 50%;
-                transform: translate(-50%, -50%);
             }
             .download-button:hover:not(:disabled) {
                 background: var(--color-app-button-hover);
@@ -374,7 +367,6 @@
 
     function observeURLMutation() {
         let previousPath = location.pathname;
-        let headerObserver = null;
         let initObserver = null;
         const onRealNavigation = () => {
             if (location.pathname === previousPath) return;
@@ -398,10 +390,6 @@
             state.viewer.type = null;
             state.viewer.url = null;
             state.viewer.notFoundToastShown = false;
-            if (headerObserver) {
-                headerObserver.disconnect();
-                headerObserver = null;
-            }
             if (initObserver) {
                 initObserver.disconnect();
                 initObserver = null;
@@ -409,17 +397,6 @@
         };
         const onChapterEnter = () => {
             let initialized = false;
-            const relocateButtonToHeader = () => {
-                const header = getViewerHeaderContainer();
-                if (!header) return;
-                const btn = document.querySelector('.download-button');
-                if (!btn) return;
-                if (btn.parentElement !== header) {
-                    btn.classList.remove('download-button-default');
-                    btn.classList.add('download-button-custom');
-                    header.appendChild(btn);
-                }
-            };
             const tryInit = () => {
                 if (initialized) return;
                 const viewer = getViewerContainer();
@@ -431,16 +408,10 @@
                 }
                 createDownloadButton();
                 detectRenderType();
-                relocateButtonToHeader();
                 setSinglePageLayout();
             };
             initObserver = new MutationObserver(tryInit);
             initObserver.observe(document.body, {
-                childList: true,
-                subtree: true
-            });
-            headerObserver = new MutationObserver(relocateButtonToHeader);
-            headerObserver.observe(document.body, {
                 childList: true,
                 subtree: true
             });
@@ -652,14 +623,6 @@
             document.scrollingElement ||
             document.documentElement
         );
-    }
-
-    function getViewerHeaderContainer() {
-        const viewerHeader = document.querySelector('#viewer-header');
-        if (!viewerHeader) return null;
-        const title = viewerHeader.querySelector('span[class^="vh__title__"]');
-        if (!title) return null;
-        return title.parentElement;
     }
 
     function applyViewerHeaderOverride() {
@@ -1084,24 +1047,14 @@
             throwDownloadError('MOBILE_DEVICE_NOT_SUPPORTED');
             return;
         }
-        const globalHeader = getViewerHeaderContainer();
-        let insertTarget;
-        let regionClass;
-        if (globalHeader) {
-            insertTarget = globalHeader;
-            regionClass = 'download-button-custom';
-        } else {
-            insertTarget = document.body;
-            regionClass = 'download-button-default';
-        }
         const btn = document.createElement('button');
-        btn.classList.add('download-button', regionClass);
+        btn.classList.add('download-button');
         btn.textContent = UI_BUTTON_LABELS.DEFAULT;
         btn.onclick = () => {
             detectRenderType();
             executeDownloadPipeline(btn);
         };
-        insertTarget.appendChild(btn);
+        document.body.appendChild(btn);
         const popup = document.createElement('div');
         popup.className = 'download-popup';
         popup.innerHTML = `
