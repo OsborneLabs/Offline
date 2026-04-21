@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      1.2.1
+// @version      1.2.2
 // @description  Downloads and saves Lezhin chapter images to a ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
@@ -460,10 +460,12 @@
         }
         const chapterViewerRegex =
             /^\/comic\/[^\/]+\/(?:chapter|volume)\/[a-zA-Z0-9_-]+\/viewer\/?$/;
+        const libraryChapterRegex =
+            /^\/[a-z]{2}\/library\/comic\/[a-z]{2}-[A-Z]{2}\/[^\/]+\/\d+\/?$/;
         return (
             /^\/(?:[a-z]{2}\/)?comic\/[^\/]+\/[^\/]+\/?$/.test(url) ||
             chapterViewerRegex.test(url) ||
-            viewerRegex.test(url)
+            viewerRegex.test(url) || libraryChapterRegex.test(url)
         );
     }
 
@@ -726,7 +728,7 @@
     function isPromoImage(img) {
         if (!(img instanceof HTMLImageElement) || !img.src) return true;
         const PROMO_IMAGE_URL_BLOCKLIST = [
-            'cover', 'banner', 'notice_contents', 'promotion'
+            'banner', 'notice_contents', 'promotion'
         ];
         const PROMO_IMAGE_CLASS_BLOCKLIST = [
             'promotion', 'thumbnail'
@@ -1523,7 +1525,7 @@
             const op = getCanvasImageData(img, args);
             if (!op) return;
             const pageIndex = getVisiblePageIndex(this.canvas);
-            if (!pageIndex) return;
+            if (pageIndex == null) return;
             const store = state.canvas.enabled ?
                 state.canvas.pages :
                 state.canvas.buffer;
