@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      1.2.2
-// @description  Downloads and saves Lezhin chapter images to a ZIP file for offline reading
+// @version      1.2.3
+// @description  Auto downloads Lezhin chapter images to a ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
 // @homepageURL  https://github.com/OsborneLabs/Offline
@@ -143,11 +143,11 @@
         },
         NO_IMAGES_COLLECTED: {
             code: 'no-images-collected',
-            message: 'No images were collected'
+            message: 'Images couldn\'t be collected'
         },
         TOTAL_PAGE_COUNT_NOT_FOUND: {
             code: 'total-page-count-not-found',
-            message: 'Could not find page count'
+            message: 'Page count couldn\'t be found'
         },
         UNKNOWN_ERROR: {
             code: 'unknown-error',
@@ -155,11 +155,11 @@
         },
         VIEWER_CONTAINER_NOT_FOUND: {
             code: 'viewer-container-not-found',
-            message: 'Could not find view container'
+            message: 'View container couldn\'t be found'
         },
         ZIP_CREATION_FAILED: {
             code: 'zip-creation-failed',
-            message: 'Failed to create ZIP file'
+            message: 'ZIP file couldn\'t be created'
         }
     };
 
@@ -211,11 +211,11 @@
                 --color-app-button-default: #ED1C24;
                 --color-app-button-hover: #C4161C;
                 --color-app-button-disabled: #FF5254;
-                --color-app-button-popup-default: #1F1F1F;
+                --color-app-button-popup-default: rgba(31, 31, 31, 0.95);
                 --color-app-text-default: white;
                 --size-app-button-height: 28px;
                 --size-text-body-default: 13px;
-                --size-text-toast-default: 14px;
+                --size-text-toast-default: 15px;
                 --size-text-popup-default: 12px;
             }
             @keyframes toast-slide-in {
@@ -259,9 +259,9 @@
                 display: flex;
                 align-items: center;
                 justify-content: space-between;
-                min-width: 260px;
+                min-width: 230px;
                 max-width: 360px;
-                padding: 10px 14px;
+                padding: 11px 18px;
                 border-radius: 16px;
                 font-size: var(--size-text-toast-default);
                 color: white;
@@ -277,9 +277,9 @@
             .lezhin-toast-close {
                 position: relative;
                 bottom: 1px;
-                padding: 0;
+                padding-left: 10px;
                 border: none;
-                font-size: 20px;
+                font-size: 21px;
                 line-height: 1;
                 color: white;
                 background: none;
@@ -324,7 +324,7 @@
                 transform: translateX(-50%);
                 min-width: 150px;
                 padding: 12px;
-                border-radius: 16px;
+                border-radius: 20px;
                 font-size: var(--size-text-popup-default);
                 color: white;
                 background: var(--color-app-button-popup-default);
@@ -460,12 +460,12 @@
         }
         const chapterViewerRegex =
             /^\/comic\/[^\/]+\/(?:chapter|volume)\/[a-zA-Z0-9_-]+\/viewer\/?$/;
-        const libraryChapterRegex =
+        const libraryViewerRegex =
             /^\/[a-z]{2}\/library\/comic\/[a-z]{2}-[A-Z]{2}\/[^\/]+\/\d+\/?$/;
         return (
             /^\/(?:[a-z]{2}\/)?comic\/[^\/]+\/[^\/]+\/?$/.test(url) ||
             chapterViewerRegex.test(url) ||
-            viewerRegex.test(url) || libraryChapterRegex.test(url)
+            viewerRegex.test(url) || libraryViewerRegex.test(url)
         );
     }
 
@@ -625,23 +625,6 @@
             document.scrollingElement ||
             document.documentElement
         );
-    }
-
-    function applyViewerHeaderOverride() {
-        const viewerHeader = document.getElementById('viewer-header');
-        if (!viewerHeader) return null;
-        const existing = document.getElementById('download-header-override');
-        if (existing) return existing;
-        const style = document.createElement('style');
-        style.id = 'download-header-override';
-        style.textContent = `
-            #viewer-header {
-                transform: none !important;
-                opacity: 1 !important;
-            }
-        `;
-        document.head.appendChild(style);
-        return style;
     }
 
     function getIndexedComicCuts({
@@ -2152,7 +2135,6 @@
         state.ui.phase = 'collecting';
         const session = startDownloadSession();
         state.ui.activeDownload = session;
-        const headerOverrideStyle = applyViewerHeaderOverride();
         btn.disabled = true;
         const setLabel = label => updateDownloadButton(btn, label);
         const onCollect = c => setLabel(UI_BUTTON_LABELS.COLLECTING(c));
@@ -2333,9 +2315,6 @@
             btn.disabled = false;
             unlockPageScroll();
             unlockPageInteraction();
-            if (headerOverrideStyle) {
-                headerOverrideStyle.remove();
-            }
             if (
                 completed &&
                 !sessionStorage.getItem(
