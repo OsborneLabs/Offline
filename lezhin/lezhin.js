@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      1.2.3
-// @description  Auto downloads Lezhin chapter images to a ZIP file for offline reading
+// @version      1.2.4
+// @description  Downloads and saves Lezhin chapter images to a ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
 // @homepageURL  https://github.com/OsborneLabs/Offline
@@ -147,7 +147,7 @@
         },
         TOTAL_PAGE_COUNT_NOT_FOUND: {
             code: 'total-page-count-not-found',
-            message: 'Page count couldn\'t be found'
+            message: 'Page count not found'
         },
         UNKNOWN_ERROR: {
             code: 'unknown-error',
@@ -155,7 +155,7 @@
         },
         VIEWER_CONTAINER_NOT_FOUND: {
             code: 'viewer-container-not-found',
-            message: 'View container couldn\'t be found'
+            message: 'View container not found'
         },
         ZIP_CREATION_FAILED: {
             code: 'zip-creation-failed',
@@ -324,7 +324,7 @@
                 transform: translateX(-50%);
                 min-width: 150px;
                 padding: 12px;
-                border-radius: 20px;
+                border-radius: 18px;
                 font-size: var(--size-text-popup-default);
                 color: white;
                 background: var(--color-app-button-popup-default);
@@ -342,6 +342,9 @@
             }
             .download-popup-version {
                 margin-bottom: 10px;
+            }
+            .download-popup-link + .download-popup-link {
+                margin-top: 2px;
             }
             body.lock-site-ui * {
                 pointer-events: none !important;
@@ -1049,7 +1052,7 @@
                 &nbsp;·&nbsp;
                 v${SCRIPT_VERSION}
             </div>
-            <div class="download-popup-links">
+            <div class="download-popup-link">
                 <a href="https://github.com/OsborneLabs/Offline/issues"
                 target="_blank"
                 rel="noopener noreferrer"
@@ -1057,7 +1060,7 @@
                 Submit an issue
                 </a>
             </div>
-            <div class="download-popup-links">
+            <div class="download-popup-link">
                 <a href="https://greasyfork.org/en/scripts/568060-offline-for-lezhin"
                 target="_blank"
                 rel="noopener noreferrer"
@@ -2347,7 +2350,7 @@
             "bizspring.net", "clarity.ms", "creativecdn.com", "criteo.com", "doubleclick.net", "eskimi.com",
             "googletagmanager.com", "nestads.com"
         ];
-        const TELEMETRY_NETWORK_HOSTS = [
+        const TELEMETRY_NETWORK_SUBDOMAINS = [
             "ad.daum.net", "aem-kakao-collector.onkakao.net", "analytics.google.com", "analytics.tiktok.com",
             "analytics.twitter.com", "web-sdk-cdn.singular.net",
         ];
@@ -2363,7 +2366,7 @@
 
         function shouldBlock(host) {
             if (!host) return false;
-            if (TELEMETRY_NETWORK_HOSTS.includes(host)) return true;
+            if (TELEMETRY_NETWORK_SUBDOMAINS.includes(host)) return true;
             return TELEMETRY_NETWORK_DOMAINS.some(domain =>
                 host === domain || host.endsWith("." + domain)
             );
