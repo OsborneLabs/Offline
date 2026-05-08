@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      1.2.4
+// @version      1.2.5
 // @description  Downloads and saves Lezhin chapter images to a ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
@@ -218,6 +218,13 @@
                 --size-text-toast-default: 15px;
                 --size-text-popup-default: 12px;
             }
+            @font-face {
+                font-family: 'Pretendard';
+                src: url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3/packages/pretendard/dist/web/variable/woff2-dynamic-subset/PretendardVariable.subset.91.woff2') format('woff2');
+                font-weight: 100 900;
+                font-style: normal;
+                font-display: swap;
+            }
             @keyframes toast-slide-in {
                 from {
                     opacity: 0;
@@ -270,6 +277,9 @@
                 pointer-events: auto;
                 user-select: none;
                 animation: toast-slide-in 0.2s ease-out;
+            }
+            .lezhin-toast, .download-button, .download-popup {
+                font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             }
             .lezhin-toast.closing {
                 animation: toast-slide-out 0.2s ease-in forwards;
@@ -343,8 +353,8 @@
             .download-popup-version {
                 margin-bottom: 10px;
             }
-            .download-popup-link + .download-popup-link {
-                margin-top: 2px;
+            .download-popup-outbound + .download-popup-outbound {
+                margin-top: 1px;
             }
             body.lock-site-ui * {
                 pointer-events: none !important;
@@ -359,12 +369,9 @@
 
     function init() {
         sessionStorage.removeItem(UI_AUTO_REFRESH_FLAG);
+        initScriptObservers();
         createStyles();
-        observeURLMutation();
         disableSiteTelemetry();
-        initDownloadButtonObserver();
-        initCanvasDrawHook();
-        initBlobBackgroundCollector();
         createDownloadButton();
     }
 
@@ -436,6 +443,27 @@
             normalizeChapterNavigation();
             onChapterEnter();
         }
+    }
+
+    function initScriptObservers() {
+        observeURLMutation();
+        initDownloadButtonObserver();
+        initCanvasDrawHook();
+        initBlobBackgroundCollector();
+    }
+
+    function initDownloadButtonObserver() {
+        const observer = new MutationObserver(() => {
+            if (!isChapterPage()) return;
+            if (isMobileDevice()) return;
+            if (!document.querySelector('.download-button')) {
+                createDownloadButton();
+            }
+        });
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
     }
 
     function normalizeChapterNavigation() {
@@ -1014,20 +1042,6 @@
         return `${paddedIndex}.${format}`;
     }
 
-    function initDownloadButtonObserver() {
-        const observer = new MutationObserver(() => {
-            if (!isChapterPage()) return;
-            if (isMobileDevice()) return;
-            if (!document.querySelector('.download-button')) {
-                createDownloadButton();
-            }
-        });
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true
-        });
-    }
-
     function createDownloadButton() {
         if (!isChapterPage()) return;
         if (document.querySelector('.download-button')) return;
@@ -1048,11 +1062,16 @@
         popup.innerHTML = `
             <div class="download-popup-title"><strong>${SCRIPT_NAME_DEBUG}</strong></div>
             <div class="download-popup-version">
-                <a href="https://github.com/OsborneLabs/Offline" target="_blank" rel="noopener noreferrer">Osborne</a>
+                <a href="https://github.com/OsborneLabs/Offline"
+                target="_blank"
+                rel="noopener noreferrer"
+                style="text-decoration: none !important;">
+                Osborne
+                </a>
                 &nbsp;·&nbsp;
                 v${SCRIPT_VERSION}
             </div>
-            <div class="download-popup-link">
+            <div class="download-popup-outbound">
                 <a href="https://github.com/OsborneLabs/Offline/issues"
                 target="_blank"
                 rel="noopener noreferrer"
@@ -1060,7 +1079,7 @@
                 Submit an issue
                 </a>
             </div>
-            <div class="download-popup-link">
+            <div class="download-popup-outbound">
                 <a href="https://greasyfork.org/en/scripts/568060-offline-for-lezhin"
                 target="_blank"
                 rel="noopener noreferrer"
@@ -1234,7 +1253,6 @@
                     instant: true,
                     allowLastPage: false
                 });
-
                 await new Promise(r => setTimeout(r, delayMs));
                 onProgress(collectedMap.size, null);
             }
