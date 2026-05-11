@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      1.2.5
+// @version      1.2.6
 // @description  Downloads and saves Lezhin chapter images to a ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
@@ -38,10 +38,9 @@
     const SCRIPT_NAME_DEBUG = "OFFLINE FOR LEZHIN";
     const SCRIPT_VERSION =
         typeof GM_info !== 'undefined' ?
-        GM_info.script.version :
-        'unknown';
+        GM_info.script.version : 'unknown';
     const UI_AUTO_REFRESH_FLAG = 'autoRefresh';
-    const UI_TOAST_DURATION_MS = 6000;
+    const UI_TOAST_DURATION_BY_SEVERITY = {normal: 6000, important: 15000, critical: 30000};
     const UI_BUTTON_RESET_DELAY_MS = 3000;
     const UI_BUTTON_LABELS = {
         DEFAULT: 'Download',
@@ -123,43 +122,73 @@
     const DOWNLOAD_ERROR_MAP = {
         BLOB_CAPTURE_FAILED: {
             code: 'blob-capture-failed',
-            message: 'Failed to capture blob images'
+            message: 'Failed to capture blob images',
+            severity: 'normal'
         },
         DOWNLOAD_ABORTED: {
             code: 'download-aborted',
-            message: 'Download error occurred'
+            message: 'Download error occurred',
+            severity: 'normal'
+        },
+        IMAGE_ACCESS_DENIED: {
+            code: 'image-access-denied',
+            message: 'Image access expired. Refresh the page.',
+            severity: 'important'
         },
         IMAGE_COUNT_MISMATCH: {
             code: 'image-count-mismatch',
-            message: 'Failed to collect all images'
+            message: 'Failed to collect all images',
+            severity: 'important'
+        },
+        IMAGE_REQUEST_FAILED: {
+            code: 'image-request-failed',
+            message: 'Failed to request and download images',
+            severity: 'normal'
         },
         JPEG_CONVERSION_FAILED: {
             code: 'jpeg-conversion-failed',
-            message: 'Failed to convert JPEG images'
+            message: 'Failed to convert JPEG images',
+            severity: 'normal'
         },
         MOBILE_DEVICES_NOT_SUPPORTED: {
             code: 'mobile-devices-not-supported',
-            message: 'Offline mobile not supported'
+            message: 'Offline mobile not supported',
+            severity: 'important'
+        },
+        NETWORK_ERROR: {
+            code: 'network-error',
+            message: 'A network error occured',
+            severity: 'normal'
         },
         NO_IMAGES_COLLECTED: {
             code: 'no-images-collected',
-            message: 'Images couldn\'t be collected'
+            message: 'Images couldn\'t be collected',
+            severity: 'important'
+        },
+        REQUEST_TIMEOUT: {
+            code: 'request-timeout',
+            message: 'Image request timed out',
+            severity: 'normal'
         },
         TOTAL_PAGE_COUNT_NOT_FOUND: {
             code: 'total-page-count-not-found',
-            message: 'Page count not found'
+            message: 'Page count not found',
+            severity: 'critical'
         },
         UNKNOWN_ERROR: {
             code: 'unknown-error',
-            message: 'An unexpected error occurred'
+            message: 'An unexpected error occurred',
+            severity: 'critical'
         },
         VIEWER_CONTAINER_NOT_FOUND: {
             code: 'viewer-container-not-found',
-            message: 'View container not found'
+            message: 'View container not found',
+            severity: 'critical'
         },
         ZIP_CREATION_FAILED: {
             code: 'zip-creation-failed',
-            message: 'ZIP file couldn\'t be created'
+            message: 'ZIP file couldn\'t be created',
+            severity: 'important'
         }
     };
 
@@ -244,12 +273,6 @@
                     opacity: 0;
                     transform: translateY(-10px);
                 }
-            }
-            #overlay.lzModal {
-                display: none !important;
-                visibility: hidden !important;
-                opacity: 0 !important;
-                pointer-events: none !important;
             }
             #lezhin-toast-container {
                 display: flex;
@@ -624,9 +647,9 @@
                 `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - INITIAL RENDERING METHOD: %c${type.toUpperCase()}`,
                 'font-weight:bold;', {
                     images: wrapper ? wrapper.querySelectorAll('img').length : 0,
-                    blobImages: wrapper ? wrapper.querySelectorAll("img[src^='blob:']").length : 0,
+                    blobs: wrapper ? wrapper.querySelectorAll("img[src^='blob:']").length : 0,
                     canvases: wrapper ? wrapper.querySelectorAll('canvas').length : 0
-                }
+                },
             );
         }
         state.viewer.type = type;
@@ -815,24 +838,23 @@
 
     async function setSinglePageLayout() {
         try {
-            const SINGLE_LAYOUT_DOMAINS = [
-                /\.?lezhin\.com$/,
-            ];
             const SINGLE_LAYOUT_LABELS = [
                 '두 쪽 보기',
             ];
-            const shouldApply = SINGLE_LAYOUT_DOMAINS.some(regex =>
-                regex.test(location.hostname)
-            );
-            if (!shouldApply) return;
-            if (!document.querySelector(RENDER_PAGE_SELECTORS_HORIZONTAL.kr.horizontalWrapper)) {
+            if (
+                !document.querySelector(
+                    RENDER_PAGE_SELECTORS_HORIZONTAL.kr.horizontalWrapper
+                )
+            ) {
                 return;
             }
             const wait = ms => new Promise(r => setTimeout(r, ms));
             const waitFor = (fn, timeout = 4000) => {
                 return new Promise(resolve => {
                     const existing = fn();
-                    if (existing) return resolve(existing);
+                    if (existing) {
+                        return resolve(existing);
+                    }
                     const observer = new MutationObserver(() => {
                         const el = fn();
                         if (el) {
@@ -1110,13 +1132,13 @@
         });
         btn.addEventListener('mouseleave', () => {
             clearTimeout(showTimer);
-            hideTimer = setTimeout(hidePopup, 25);
+            hideTimer = setTimeout(hidePopup, 50);
         });
         popup.addEventListener('mouseenter', () => {
             clearTimeout(hideTimer);
         });
         popup.addEventListener('mouseleave', () => {
-            hideTimer = setTimeout(hidePopup, 25);
+            hideTimer = setTimeout(hidePopup, 50);
         });
     }
 
@@ -1205,16 +1227,20 @@
     }
 
     function validateCollectedImages(session, images) {
+
+        function debugLogWithUrl(message) {
+            console.debug(`${message} | ${location.href}`);
+        }
         if (session.cancelled) {
             throwDownloadError('DOWNLOAD_ABORTED');
         }
         if (!images || !images.length) {
-            console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - NO IMAGES COLLECTED`);
+            debugLogWithUrl(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ERROR OCCURED: NO_IMAGES_COLLECTED`);
             throwDownloadError('NO_IMAGES_COLLECTED');
         }
         const isValidCount = validateCollectedPageCount(images.length);
         if (!isValidCount) {
-            console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - IMAGE COUNT MISMATCH`);
+            debugLogWithUrl(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ERROR OCCURED: IMAGE_COUNT_MISMATCH`);
             throwDownloadError('IMAGE_COUNT_MISMATCH');
         }
         return images;
@@ -1715,7 +1741,7 @@
                 const img = el.querySelector('img[src^="blob:"]');
                 if (!img || !img.complete) return;
                 state.blob.pages.set(index, img);
-                console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - BACKGROUND BLOB STORED: ${index}`);
+                console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - BACKGROUND BLOB COLLECTED: ${index}`);
             });
         }
         const observer = new MutationObserver(() => {
@@ -2136,14 +2162,65 @@
 
     function getImageData(url) {
         return new Promise((resolve, reject) => {
+            function fail(type, details = null) {
+                if (details) {
+                    console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ${type}`, details);
+                }
+                switch (type) {
+                    case 'HTTP_401':
+                    case 'HTTP_403':
+                        return reject(new Error(
+                            DOWNLOAD_ERROR_MAP.IMAGE_ACCESS_DENIED.code
+                        ));
+                    case 'REQUEST_TIMEOUT':
+                        return reject(new Error(
+                            DOWNLOAD_ERROR_MAP.REQUEST_TIMEOUT.code
+                        ));
+                    case 'NETWORK_ERROR':
+                        return reject(new Error(
+                            DOWNLOAD_ERROR_MAP.NETWORK_ERROR.code
+                        ));
+                    default:
+                        return reject(new Error(
+                            DOWNLOAD_ERROR_MAP.IMAGE_REQUEST_FAILED.code
+                        ));
+                }
+            }
             GM_xmlhttpRequest({
                 method: 'GET',
                 url,
                 responseType: 'arraybuffer',
-                onload: r =>
-                    r.status === 200 ?
-                    resolve(new Uint8Array(r.response)) : reject(r.status),
-                onerror: reject
+                headers: {
+                    Referer: `${location.origin}/`
+                },
+                timeout: 30000,
+                onload: response => {
+                    const {
+                        status,
+                        response: data
+                    } = response;
+                    if (
+                        status >= 200 &&
+                        status < 300 &&
+                        data
+                    ) {
+                        resolve(new Uint8Array(data));
+                        return;
+                    }
+                    fail(`HTTP_${status || 'UNKNOWN'}`, {
+                        status,
+                        url
+                    });
+                },
+                onerror: error => {
+                    fail('NETWORK_ERROR', {
+                        url,
+                        error
+                    });
+                },
+                ontimeout: () => {
+                    fail('REQUEST_TIMEOUT', url);
+                }
             });
         });
     }
@@ -2473,7 +2550,14 @@
         document.body.appendChild(container);
     }
 
-    function showToast(message) {
+    function getToastDuration(severity = 'normal') {
+        return (
+            UI_TOAST_DURATION_BY_SEVERITY[severity] ||
+            UI_TOAST_DURATION_BY_SEVERITY.normal
+        );
+    }
+
+    function showToast(message, severity = 'normal') {
         createToastContainer();
         const toast = document.createElement('div');
         toast.className = 'lezhin-toast';
@@ -2488,9 +2572,10 @@
         document
             .getElementById('lezhin-toast-container')
             .appendChild(toast);
+
         setTimeout(() => {
             closeToast(toast);
-        }, UI_TOAST_DURATION_MS);
+        }, getToastDuration(severity));
     }
 
     function closeToast(toast) {
@@ -2504,8 +2589,8 @@
         );
     }
 
-    function showErrorMessage(message) {
-        showToast(message, 'error');
+    function showErrorMessage(message, severity = 'normal') {
+        showToast(message, severity);
     }
 
     function throwDownloadError(error) {
@@ -2536,12 +2621,16 @@
     function handleDownloadError(error) {
         const known = DOWNLOAD_ERROR_INDEX[error?.message];
         if (known) {
-            showErrorMessage(known.message);
+            showErrorMessage(
+                known.message,
+                known.severity
+            );
             return;
         }
         console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION}: DOWNLOAD ERROR OCCURRED\n`, error);
         showErrorMessage(
-            DOWNLOAD_ERROR_MAP.UNKNOWN_ERROR.message
+            DOWNLOAD_ERROR_MAP.UNKNOWN_ERROR.message,
+            DOWNLOAD_ERROR_MAP.UNKNOWN_ERROR.severity
         );
     }
 
