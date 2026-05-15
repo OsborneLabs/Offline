@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      1.2.6
+// @version      1.2.7
 // @description  Downloads and saves Lezhin chapter images to a ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
@@ -36,11 +36,13 @@
     'use strict';
 
     const SCRIPT_NAME_DEBUG = "OFFLINE FOR LEZHIN";
-    const SCRIPT_VERSION =
-        typeof GM_info !== 'undefined' ?
-        GM_info.script.version : 'unknown';
+    const SCRIPT_VERSION = typeof GM_info !== 'undefined' ? GM_info.script.version : 'unknown';
     const UI_AUTO_REFRESH_FLAG = 'autoRefresh';
-    const UI_TOAST_DURATION_BY_SEVERITY = {normal: 6000, important: 15000, critical: 30000};
+    const UI_TOAST_DURATION_BY_SEVERITY = {
+        normal: 6000,
+        important: 15000,
+        critical: 30000
+    };
     const UI_BUTTON_RESET_DELAY_MS = 3000;
     const UI_BUTTON_LABELS = {
         DEFAULT: 'Download',
@@ -255,24 +257,12 @@
                 font-display: swap;
             }
             @keyframes toast-slide-in {
-                from {
-                    opacity: 0;
-                    transform: translateY(-10px);
-                }
-                to {
-                    opacity: 1;
-                    transform: translateY(0);
-                }
+                from { opacity: 0; transform: translateY(-10px); }
+                to { opacity: 1; transform: translateY(0); }
             }
             @keyframes toast-slide-out {
-                from {
-                    opacity: 1;
-                    transform: translateY(0);
-                }
-                to {
-                    opacity: 0;
-                    transform: translateY(-10px);
-                }
+                from { opacity: 1; transform: translateY(0); }
+                to { opacity: 0; transform: translateY(-10px); }
             }
             #lezhin-toast-container {
                 display: flex;
@@ -503,6 +493,9 @@
     }
 
     function isChapterPage(url = location.pathname) {
+        if (/\/comments\/?$/.test(url)) {
+            return false;
+        }
         const usesStringChapterId =
             isAlternateViewerLayout() ||
             /(^|\.)lezhinx\.com$/.test(location.hostname);
@@ -1229,7 +1222,7 @@
     function validateCollectedImages(session, images) {
 
         function debugLogWithUrl(message) {
-            console.debug(`${message} | ${location.href}`);
+            console.debug(`${message} · ${location.href}`);
         }
         if (session.cancelled) {
             throwDownloadError('DOWNLOAD_ABORTED');
@@ -2627,7 +2620,7 @@
             );
             return;
         }
-        console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION}: DOWNLOAD ERROR OCCURRED\n`, error);
+        console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION}: DOWNLOAD ERROR OCCURRED, SEE CONSOLE BELOW\n`, error);
         showErrorMessage(
             DOWNLOAD_ERROR_MAP.UNKNOWN_ERROR.message,
             DOWNLOAD_ERROR_MAP.UNKNOWN_ERROR.severity
