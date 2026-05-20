@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      1.2.7
+// @version      1.2.8
 // @description  Downloads and saves Lezhin chapter images to a ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
@@ -1751,8 +1751,8 @@
 
     async function collectBlobPages(session, onProgress) {
         async function collectBlobPagesDeterministic() {
-            const WAIT_AFTER_SCROLL_MS = 120;
-            const MAX_IDLE_ROUNDS = 60;
+            const WAIT_AFTER_SCROLL_MS = 250;
+            const MAX_IDLE_ROUNDS = 80;
             const collected = new Map();
             const layout = getViewerLayoutConfig();
             let lastCount = 0;
