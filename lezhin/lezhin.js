@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      1.2.8
+// @version      1.2.9
 // @description  Downloads and saves Lezhin chapter images to a ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
@@ -1749,7 +1749,7 @@
         captureVisibleBlobs();
     }
 
-    async function collectBlobPages(session, onProgress) {
+    async function collectBlobPages(session, onProgress, expectedCount = null) {
         async function collectBlobPagesDeterministic() {
             const WAIT_AFTER_SCROLL_MS = 250;
             const MAX_IDLE_ROUNDS = 80;
@@ -1814,11 +1814,14 @@
                     }
                 });
                 onProgress?.(collected.size);
-                if (
-                    totalContainers > 0 &&
-                    collected.size === totalContainers
-                ) {
-                    break;
+                if (totalContainers > 0) {
+                    const promoContainers = [...containers].filter(el => {
+                        const img = el.querySelector('img');
+                        return img && !img.src.startsWith('blob:') && isPromoImage(img);
+                    }).length;
+                    if (collected.size >= totalContainers - promoContainers) {
+                        break;
+                    }
                 }
                 if (collected.size === lastCount) {
                     idleRounds++;
@@ -2344,7 +2347,8 @@
                         state.blob.buffer.clear();
                         await collectBlobPages(
                             session,
-                            onCollect
+                            onCollect,
+                            expectedCount
                         );
                     }
                     const orderedImages =
