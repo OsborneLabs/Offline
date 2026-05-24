@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      1.2.9
+// @version      1.3.0
 // @description  Downloads and saves Lezhin chapter images to a ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
@@ -1752,11 +1752,11 @@
     async function collectBlobPages(session, onProgress, expectedCount = null) {
         async function collectBlobPagesDeterministic() {
             const WAIT_AFTER_SCROLL_MS = 250;
-            const MAX_IDLE_ROUNDS = 80;
+            const STALL_TIMEOUT_MS = 800;
             const collected = new Map();
             const layout = getViewerLayoutConfig();
             let lastCount = 0;
-            let idleRounds = 0;
+            let lastProgressTs = performance.now();
 
             function getPageContainers() {
                 for (const selector of RENDER_PAGE_SELECTORS) {
@@ -1783,22 +1783,17 @@
                 return results;
             }
 
-            function scrollToLastCollected(totalContainers) {
-                if (!collected.size) {
-                    scrollToComicPage(1);
+            function scrollToFirstMissing(totalContainers) {
+                const allIndexes = [...Array(totalContainers).keys()].map(i => i + 1);
+                const firstMissing = allIndexes.find(i => !collected.has(i));
+                if (firstMissing == null) return;
+                const isLast = firstMissing >= totalContainers;
+                if (layout.scroll.preventLastScroll && isLast) {
                     return;
                 }
-                const maxIndex = Math.max(...collected.keys());
-                if (
-                    layout.scroll.preventLastScroll &&
-                    maxIndex >= totalContainers
-                ) {
-                    return;
-                }
-                scrollToComicPage(maxIndex, {
-                    instant: false,
-                    allowLastPage: !layout.scroll.preventLastScroll,
-                    offset: layout.scroll.offset
+                scrollToComicPage(firstMissing, {
+                    instant: true,
+                    allowLastPage: !layout.scroll.preventLastScroll
                 });
             }
             while (!session.cancelled) {
@@ -1817,23 +1812,29 @@
                 if (totalContainers > 0) {
                     const promoContainers = [...containers].filter(el => {
                         const img = el.querySelector('img');
-                        return img && !img.src.startsWith('blob:') && isPromoImage(img);
+                        if (!img) return false;
+                        if (!img.src.startsWith('blob:') && isPromoImage(img)) return true;
+                        const dataSrc = el.dataset.src || '';
+                        if (dataSrc && isPromoImage({
+                                src: dataSrc,
+                                closest: () => null
+                            })) return true;
+                        return false;
                     }).length;
                     if (collected.size >= totalContainers - promoContainers) {
                         break;
                     }
                 }
                 if (collected.size === lastCount) {
-                    idleRounds++;
-                    if (idleRounds > MAX_IDLE_ROUNDS) {
+                    if (performance.now() - lastProgressTs > STALL_TIMEOUT_MS) {
                         break;
                     }
                 } else {
-                    idleRounds = 0;
+                    lastProgressTs = performance.now();
                     lastCount = collected.size;
                 }
                 if (collected.size < totalContainers) {
-                    scrollToLastCollected(totalContainers);
+                    scrollToFirstMissing(totalContainers);
                     await new Promise(r =>
                         setTimeout(r, WAIT_AFTER_SCROLL_MS)
                     );
@@ -1845,6 +1846,37 @@
         for (const [index, img] of collected.entries()) {
             if (!state.blob.pages.has(index)) {
                 state.blob.pages.set(index, img);
+            }
+        }
+        let previousMissingCount = Infinity;
+        for (let attempt = 0; attempt < 4 && !session.cancelled; attempt++) {
+            const missing = findMissingPages(state.blob.pages);
+            if (!missing.length) break;
+            if (missing.length >= previousMissingCount) break;
+            previousMissingCount = missing.length;
+            for (const index of missing) {
+                if (session.cancelled) break;
+                scrollToComicPage(index, {
+                    instant: true,
+                    allowLastPage: false
+                });
+                await new Promise(r => setTimeout(r, 350));
+                const containers = (() => {
+                    for (const sel of RENDER_PAGE_SELECTORS) {
+                        const nodes = document.querySelectorAll(sel);
+                        if (nodes.length) return nodes;
+                    }
+                    return [];
+                })();
+                containers.forEach((el, i) => {
+                    const idx = i + 1;
+                    if (state.blob.pages.has(idx)) return;
+                    const img = el.querySelector('img[src^="blob:"]');
+                    if (img && img.complete) {
+                        state.blob.pages.set(idx, img);
+                        if (onProgress) onProgress(state.blob.pages.size);
+                    }
+                });
             }
         }
         return state.blob.pages;
@@ -2436,8 +2468,8 @@
     }
 
     function disableSiteTelemetryNetworkRequests() {
-        if (window.__disableSiteTelemetryRequestsInstalled) return;
-        window.__disableSiteTelemetryRequestsInstalled = true;
+        if (window.__disableTelemetryNetworkRequests) return;
+        window.__disableTelemetryNetworkRequests = true;
         const TELEMETRY_NETWORK_DOMAINS = [
             "bizspring.net", "clarity.ms", "creativecdn.com", "criteo.com", "doubleclick.net", "eskimi.com",
             "googletagmanager.com", "nestads.com"
