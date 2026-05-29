@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      1.3.0
+// @version      1.3.1
 // @description  Downloads and saves Lezhin chapter images to a ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
@@ -756,7 +756,8 @@
     }
 
     function isPromoImage(img) {
-        if (!(img instanceof HTMLImageElement) || !img.src) return true;
+        if (!(img instanceof HTMLImageElement)) return false;
+        if (!img.src) return false;
         const PROMO_IMAGE_URL_BLOCKLIST = [
             'banner', 'notice_contents', 'promotion'
         ];
@@ -774,7 +775,7 @@
             }
             return false;
         } catch {
-            return true;
+            return false;
         }
     }
 
@@ -1812,7 +1813,7 @@
                 if (totalContainers > 0) {
                     const promoContainers = [...containers].filter(el => {
                         const img = el.querySelector('img');
-                        if (!img) return false;
+                        if (!img || !img.src) return false;
                         if (!img.src.startsWith('blob:') && isPromoImage(img)) return true;
                         const dataSrc = el.dataset.src || '';
                         if (dataSrc && isPromoImage({
