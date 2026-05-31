@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      1.3.1
+// @version      2.0.0
 // @description  Downloads and saves Lezhin chapter images to a ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
@@ -37,11 +37,12 @@
 
     const SCRIPT_NAME_DEBUG = "OFFLINE FOR LEZHIN";
     const SCRIPT_VERSION = typeof GM_info !== 'undefined' ? GM_info.script.version : 'unknown';
-    const UI_AUTO_REFRESH_FLAG = 'autoRefresh';
+    const STORAGE_KEY_AUTO_REFRESH = 'autoRefresh';
+    const STORAGE_KEY_SMALL_FILE_SIZE = 'small-file-size';
     const UI_TOAST_DURATION_BY_SEVERITY = {
-        normal: 6000,
-        important: 15000,
-        critical: 30000
+        normal: 10000,
+        important: 30000,
+        critical: 60000
     };
     const UI_BUTTON_RESET_DELAY_MS = 3000;
     const UI_BUTTON_LABELS = {
@@ -50,6 +51,12 @@
         DOWNLOADING: (c, t) => `Downloading: ${c}/${t}`,
         CONVERTING: (c, t) => t && c >= t - 1 ? 'Finishing...' : c === 0 ? 'Converting...' : t ? `Converting: ${c}/${t}` : `Converting: ${c}`,
         COMPLETE: 'Complete!'
+    };
+    const UI_ICON_SET = {
+        bookmark: `<svg class="bookmark-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28"><path d="M9.25 3.5C7.45507 3.5 6 4.95507 6 6.75V24.75C6 25.0348 6.16133 25.2951 6.41643 25.4217C6.67153 25.5484 6.97638 25.5197 7.20329 25.3475L14 20.1914L20.7967 25.3475C21.0236 25.5197 21.3285 25.5484 21.5836 25.4217C21.8387 25.2951 22 25.0348 22 24.75V6.75C22 4.95507 20.5449 3.5 18.75 3.5H9.25Z" fill="white"/></svg>`,
+        heart: `<svg class="heart-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12.8198687,5.57958759 L11.9991485,6.40209417 L11.1758977,5.57884333 C9.07682963,3.47977526 5.67356786,3.47977526 3.5744998,5.57884333 C1.47543173,7.6779114 1.47543173,11.0811732 3.5744998,13.1802412 L11.4698687,21.0756101 C11.7627619,21.3685033 12.2376356,21.3685033 12.5305288,21.0756101 L20.4319958,13.1787767 C22.5263889,11.0727481 22.5299763,7.6790351 20.4305288,5.57958759 C18.3276384,3.4766972 14.9227559,3.47670037 12.8198687,5.57958759 Z"/></svg>`,
+        megaphone: `<svg class="megaphone-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28"><path d="M26.0008 7.35334C26.0008 5.54646 24.2879 4.23059 22.5421 4.69622L4.04548 9.62939C2.84171 9.95045 2.00415 11.0407 2.00415 12.2865V15.7136C2.00415 16.9594 2.84171 18.0496 4.04548 18.3707L7 19.1587V19.5C7 21.9853 9.01472 24 11.5 24C13.2899 24 14.8357 22.955 15.5606 21.4419L22.5421 23.3039C24.2879 23.7695 26.0008 22.4536 26.0008 20.6468V7.35334ZM8.50057 19.5589L14.0722 21.0449C13.5474 21.9168 12.5918 22.5 11.5 22.5C9.86282 22.5 8.53195 21.1886 8.50057 19.5589Z"/></svg>`,
+        update: `<svg class="update-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g transform="rotate(90 12 12)"><path d="M7.94822962,5.02850432 C8.2831456,5.46765091 8.19865,6.09515261 7.75950341,6.4300686 C6.03254452,7.74713709 5,9.78703304 5,12 C5,15.4973075 7.56475199,18.395585 10.9159977,18.9165744 L10.2071068,18.2071068 C9.81658249,17.1834175 9.81658249,17.1834175 10.2071068,16.7928932 C10.5976311,16.4023689 11.2307961,16.4023689 11.6213203,16.7928932 L14.1213203,19.2928932 C14.5118446,19.6834175 14.5118446,20.3165825 14.1213203,20.7071068 L11.6213203,23.2071068 C11.2307961,23.5976311 10.5976311,23.5976311 10.2071068,23.2071068 C9.81658249,22.8165825 9.81658249,22.1834175 10.2071068,21.7928932 L11.0502786,20.9504867 C6.52614758,20.4760098 3,16.6497928 3,12 C3,9.15643984 4.32881972,6.5312223 6.54666534,4.83977811 C6.98581193,4.50486213 7.61331363,4.58935773 7.94822962,5.02850432 Z M9.87867966,3.29289322 L12.3786797,0.792893219 C12.7692039,0.402368927 13.4023689,0.402368927 13.7928932,0.792893219 C14.1533772,1.15337718 14.1811067,1.72060824 13.8760818,2.11289944 L13.7928932,2.20710678 L12.9497214,3.0495133 C17.4738524,3.52399021 21,7.35020716 21,12 C21,14.7198329 19.7848559,17.243156 17.7284056,18.9418543 C17.3026041,19.2935809 16.6722931,19.2335313 16.3205666,18.8077299 C15.96884,18.3819284 16.0288896,17.7516174 16.454691,17.3998909 C18.0559569,16.0771906 19,14.1168256 19,12 C19,8.50269253 16.435248,5.60441498 13.0840023,5.08342564 L13.7928932,5.79289322 C14.1834175,6.18341751 14.1834175,6.81658249 13.7928932,7.20710678 C13.4324093,7.56759074 12.8651782,7.59532028 12.472887,7.29029539 L12.3786797,7.20710678 L9.87867966,4.70710678 C9.51819569,4.34662282 9.49046616,3.77939176 9.79549105,3.38710056 L9.87867966,3.29289322 L12.3786797,0.792893219 L9.87867966,3.29289322 Z"/></g></svg>`
     };
 
     const VIEWER_ALTERNATE_DOMAINS = [
@@ -62,22 +69,13 @@
     const RENDER_DETECTORS = {
         webp: {
             detect(wrapper) {
-                if (wrapper.querySelector('canvas')) {
-                    return false;
-                }
-                if (wrapper.querySelector("img[src^='blob:']")) {
-                    return false;
-                }
                 const imgs = [...wrapper.querySelectorAll('img')]
                     .filter(img =>
                         img.src &&
-                        !img.src.startsWith('blob:') &&
                         !isPromoImage(img)
                     );
-                if (imgs.length < 5) {
-                    return false;
-                }
-                return true;
+
+                return imgs.length >= 5;
             }
         },
         canvas: {
@@ -159,7 +157,7 @@
         },
         NETWORK_ERROR: {
             code: 'network-error',
-            message: 'A network error occured',
+            message: 'A network error occurred',
             severity: 'normal'
         },
         NO_IMAGES_COLLECTED: {
@@ -219,12 +217,8 @@
             buffer: new Map(),
             pages: new Map()
         },
-        viewer: {
-            detected: false,
-            type: null,
-            url: null,
-            initialRenderingLogged: false,
-            notFoundToastShown: false
+        images: {
+            loggedPromoImages: new Set()
         },
         ui: {
             isDownloading: false,
@@ -232,6 +226,13 @@
             activeDownload: null,
             spaNavigated: false,
             images: new Map()
+        },
+        viewer: {
+            detected: false,
+            type: null,
+            url: null,
+            initialRenderingLogged: false,
+            notFoundToastShown: false
         }
     };
 
@@ -240,21 +241,36 @@
         style.textContent = `
             :root {
                 --color-app-button-default: #ED1C24;
-                --color-app-button-hover: #C4161C;
                 --color-app-button-disabled: #FF5254;
-                --color-app-button-popup-default: rgba(31, 31, 31, 0.95);
+                --color-app-button-hover: #C4161C;
+                --color-app-button-popup-default: rgba(22, 22, 22, 0.98);
+                --color-app-divider: rgba(255, 255, 255, 0.08);
+                --color-app-icon-bookmark: white;
+                --color-app-icon-default: rgba(255, 255, 255, 0.45);
+                --color-app-icon-heart-hover: red;
+                --color-app-icon-megaphone-hover: gold;
+                --color-app-icon-update-hover: white;
+                --color-app-popup-tooltip: rgba(50, 50, 50, 0.97);
+                --color-app-switch-off: rgba(255, 255, 255, 0.18);
+                --color-app-switch-on: #2AA866;
+                --color-app-switch-thumb: white;
                 --color-app-text-default: white;
+                --color-app-text-muted: rgba(255, 255, 255, 0.45);
+                --color-app-text-secondary: rgba(255, 255, 255, 0.70);
                 --size-app-button-height: 28px;
-                --size-text-body-default: 13px;
+                --size-text-button-default: 13px;
+                --size-text-popup-meta-default: 11px;
+                --size-text-popup-section-highlight: 11px;
+                --size-text-popup-section-label: 12px;
+                --size-text-popup-title-default: 17px;
                 --size-text-toast-default: 15px;
-                --size-text-popup-default: 12px;
             }
             @font-face {
                 font-family: 'Pretendard';
-                src: url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3/packages/pretendard/dist/web/variable/woff2-dynamic-subset/PretendardVariable.subset.91.woff2') format('woff2');
-                font-weight: 100 900;
                 font-style: normal;
+                font-weight: 100 900;
                 font-display: swap;
+                src: url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3/packages/pretendard/dist/web/variable/woff2-dynamic-subset/PretendardVariable.subset.91.woff2') format('woff2');
             }
             @keyframes toast-slide-in {
                 from { opacity: 0; transform: translateY(-10px); }
@@ -266,12 +282,12 @@
             }
             #lezhin-toast-container {
                 display: flex;
+                flex-direction: column;
+                gap: 10px;
                 position: fixed;
                 top: 20px;
                 left: 50%;
                 z-index: 9999;
-                flex-direction: column;
-                gap: 10px;
                 transform: translateX(-50%);
                 pointer-events: none;
             }
@@ -282,14 +298,14 @@
                 min-width: 230px;
                 max-width: 360px;
                 padding: 11px 18px;
-                border-radius: 16px;
+                border-radius: 18px;
                 font-size: var(--size-text-toast-default);
                 color: white;
                 background: var(--color-app-button-default);
                 box-shadow: 0 2px 12px rgba(0,0,0,0.25);
+                animation: toast-slide-in 0.2s ease-out;
                 pointer-events: auto;
                 user-select: none;
-                animation: toast-slide-in 0.2s ease-out;
             }
             .lezhin-toast, .download-button, .download-popup {
                 font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -311,21 +327,21 @@
             }
             .download-button {
                 display: inline-flex;
+                align-items: center;
+                justify-content: center;
                 position: fixed;
                 top: 3.5%;
                 left: 50%;
-                transform: translate(-50%, -50%);
-                align-items: center;
-                justify-content: center;
+                z-index: 9998;
                 height: var(--size-app-button-height);
                 padding: 6px 10px;
                 border: none;
                 border-radius: 20px;
-                z-index: 9998;
-                font-size: var(--size-text-body-default);
+                font-size: var(--size-text-button-default);
                 font-weight: 500;
                 color: var(--color-app-text-default);
                 background: var(--color-app-button-default);
+                transform: translate(-50%, -50%);
                 cursor: pointer;
                 user-select: none;
                 transition: background-color 0.20s ease;
@@ -344,30 +360,205 @@
             .download-popup {
                 position: fixed;
                 z-index: 9998;
-                transform: translateX(-50%);
-                min-width: 150px;
-                padding: 12px;
-                border-radius: 18px;
-                font-size: var(--size-text-popup-default);
+                width: 240px;
+                padding: 16px;
+                border-radius: 20px;
                 color: white;
                 background: var(--color-app-button-popup-default);
-                box-shadow: 0 2px 12px rgba(0,0,0,0.25);
+                box-shadow: 0 4px 24px rgba(0,0,0,0.45);
                 opacity: 0;
-                visibility: hidden;
+                transform: translateX(-50%);
                 pointer-events: none;
                 user-select: none;
                 transition: opacity 0.20s ease, visibility 0.20s ease;
+                visibility: hidden;
             }
             .download-popup.visible {
                 opacity: 1;
-                visibility: visible;
                 pointer-events: auto;
+                visibility: visible;
             }
-            .download-popup-version {
+            .download-popup-title {
+                display: flex;
+                align-items: center;
+                gap: 7px;
+                margin-bottom: 2px;
+                font-size: var(--size-text-popup-title-default);
+                font-weight: 700;
+                letter-spacing: -0.01em;
+            }
+            .download-popup-meta {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 6px;
+                margin-top: 0;
+                margin-bottom: 0;
+                font-size: var(--size-text-popup-meta-default);
+                color: var(--color-app-text-muted);
+            }
+            .download-popup-meta + .download-popup-meta {
+                margin-top: 2px;
+                margin-bottom: 14px;
+            }
+            .download-popup-meta a {
+                text-decoration: none;
+                color: var(--color-app-text-muted);
+            }
+            .download-popup-meta a:hover {
+                text-decoration: underline;
+                color: var(--color-app-text-secondary);
+            }
+            .download-popup-meta-sep {
+                opacity: 0.4;
+            }
+            .download-popup-divider {
+                height: 1px;
+                margin: 0 0 14px 0;
+                background: var(--color-app-divider);
+            }
+            .download-popup-section-title {
                 margin-bottom: 10px;
+                font-size: var(--size-text-popup-meta-default);
+                font-weight: 600;
+                letter-spacing: 0.06em;
+                text-transform: uppercase;
+                color: var(--color-app-text-muted);
             }
-            .download-popup-outbound + .download-popup-outbound {
-                margin-top: 1px;
+            .download-popup-setting-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                margin-bottom: 4px;
+            }
+            .download-popup-setting-text {
+                flex: 1;
+                min-width: 0;
+            }
+            .download-popup-setting-label {
+                margin-bottom: 2px;
+                font-size: var(--size-text-popup-section-label);
+                font-weight: 600;
+                line-height: 1.3;
+                color: white;
+            }
+            .download-popup-setting-highlight {
+                font-size: var(--size-text-popup-section-highlight);
+                line-height: 1.4;
+                color: var(--color-app-text-secondary);
+            }
+            .switch {
+                flex-shrink: 0;
+                position: relative;
+                width: 36px;
+                height: 21px;
+                cursor: pointer;
+            }
+            .switch input {
+                position: absolute;
+                width: 0;
+                height: 0;
+                opacity: 0;
+            }
+            .switch-track {
+                position: absolute;
+                inset: 0;
+                border-radius: 21px;
+                background: var(--color-app-switch-off);
+                transition: background 0.22s ease;
+            }
+            .switch input:checked + .switch-track {
+                background: var(--color-app-switch-on);
+            }
+            .switch-thumb {
+                position: absolute;
+                top: 2.5px;
+                left: 2.5px;
+                width: 16px;
+                height: 16px;
+                border-radius: 50%;
+                background: var(--color-app-switch-thumb);
+                transition: transform 0.22s ease;
+            }
+            .switch input:checked ~ .switch-thumb {
+                transform: translateX(15px);
+            }
+            .icon-tooltip {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                position: relative;
+            }
+            .icon-tooltip::after {
+                content: attr(data-tooltip);
+                position: absolute;
+                bottom: calc(100% + 8px);
+                left: 50%;
+                z-index: 99999;
+                padding: 6px 8px;
+                border-radius: 8px;
+                font-size: 11px;
+                white-space: nowrap;
+                color: white;
+                background: var(--color-app-popup-tooltip);
+                opacity: 0;
+                transform: translateX(-50%) translateY(4px);
+                pointer-events: none;
+                transition: opacity 0.2s ease, transform 0.2s ease;
+            }
+            .icon-tooltip::before {
+                content: "";
+                position: absolute;
+                bottom: calc(100% + 3px);
+                left: 50%;
+                z-index: 99998;
+                border: 5px solid transparent;
+                opacity: 0;
+                transform: translateX(-50%) translateY(4px);
+                pointer-events: none;
+                transition: opacity 0.2s ease, transform 0.2s ease;
+            }
+            .icon-tooltip:hover::after, .icon-tooltip:hover::before {
+                opacity: 1;
+                transform: translateX(-50%) translateY(0);
+            }
+            .bookmark-icon {
+                display: block;
+                flex-shrink: 0;
+                width: 1em;
+                height: 1em;
+                fill: var(--color-app-icon-bookmark);
+            }
+            .update-icon {
+                width: 12px;
+                height: 12px;
+                transform-origin: center;
+                transition: transform 0.45s ease, fill 0.25s ease;
+            }
+            .update-icon:hover {
+                transform: rotate(360deg);
+                fill: var(--color-app-icon-update-hover);
+            }
+            .megaphone-icon {
+                width: 11px;
+                height: 11px;
+                transition: fill 0.25s ease;
+            }
+            .megaphone-icon:hover {
+                fill: var(--color-app-icon-megaphone-hover);
+            }
+            .heart-icon {
+                width: 11px;
+                height: 11px;
+                transition: fill 0.25s ease;
+            }
+            .heart-icon:hover {
+                fill: var(--color-app-icon-heart-hover);
+            }
+            .update-icon, .megaphone-icon, .heart-icon {
+                display: block;
+                fill: var(--color-app-icon-default);
             }
             body.lock-site-ui * {
                 pointer-events: none !important;
@@ -381,7 +572,7 @@
     }
 
     function init() {
-        sessionStorage.removeItem(UI_AUTO_REFRESH_FLAG);
+        sessionStorage.removeItem(STORAGE_KEY_AUTO_REFRESH);
         initScriptObservers();
         createStyles();
         disableSiteTelemetry();
@@ -467,9 +658,12 @@
 
     function initDownloadButtonObserver() {
         const observer = new MutationObserver(() => {
-            if (!isChapterPage()) return;
-            if (isMobileDevice()) return;
-            if (!document.querySelector('.download-button')) {
+            const existingButton = document.querySelector('.download-button');
+            if (!isChapterPage() || isMobileDevice()) {
+                existingButton?.remove();
+                return;
+            }
+            if (!existingButton) {
                 createDownloadButton();
             }
         });
@@ -496,6 +690,9 @@
         if (/\/comments\/?$/.test(url)) {
             return false;
         }
+        if (hasPurchaseModal()) {
+            return false;
+        }
         const usesStringChapterId =
             isAlternateViewerLayout() ||
             /(^|\.)lezhinx\.com$/.test(location.hostname);
@@ -512,7 +709,14 @@
         return (
             /^\/(?:[a-z]{2}\/)?comic\/[^\/]+\/[^\/]+\/?$/.test(url) ||
             chapterViewerRegex.test(url) ||
-            viewerRegex.test(url) || libraryViewerRegex.test(url)
+            viewerRegex.test(url) ||
+            libraryViewerRegex.test(url)
+        );
+    }
+
+    function hasPurchaseModal() {
+        return !!document.querySelector(
+            '.lzModalContainer a[href$="/payment"]'
         );
     }
 
@@ -637,7 +841,7 @@
             state.viewer.initialRenderingLogged = true;
             const wrapper = getViewerContainer();
             console.log(
-                `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - INITIAL RENDERING METHOD: %c${type.toUpperCase()}`,
+                `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - INITIAL RENDER METHOD: %c${type.toUpperCase()}`,
                 'font-weight:bold;', {
                     images: wrapper ? wrapper.querySelectorAll('img').length : 0,
                     blobs: wrapper ? wrapper.querySelectorAll("img[src^='blob:']").length : 0,
@@ -681,9 +885,14 @@
             const cuts = [...document.querySelectorAll(selector)];
             if (!cuts.length) continue;
             if (ensureIndex) {
+                const firstNative = cuts[0]?.dataset.cutIndex;
+                const siteIsZeroBased =
+                    firstNative !== undefined &&
+                    firstNative !== '' &&
+                    Number(firstNative) === 0;
                 let index = 1;
                 for (const cut of cuts) {
-                    if (!cut.dataset.cutIndex) {
+                    if (!cut.dataset.cutIndex || siteIsZeroBased) {
                         cut.dataset.cutIndex = String(index);
                     }
                     index++;
@@ -755,9 +964,14 @@
         throwDownloadError('TOTAL_PAGE_COUNT_NOT_FOUND');
     }
 
-    function isPromoImage(img) {
-        if (!(img instanceof HTMLImageElement)) return false;
-        if (!img.src) return false;
+    function isPromoImage(image) {
+        const src =
+            typeof image === 'string' ?
+            image :
+            image?.src;
+        if (!src) {
+            return false;
+        }
         const PROMO_IMAGE_URL_BLOCKLIST = [
             'banner', 'notice_contents', 'promotion'
         ];
@@ -765,15 +979,29 @@
             'promotion', 'thumbnail'
         ];
         try {
-            if (PROMO_IMAGE_URL_BLOCKLIST.some(p => img.src.includes(p))) {
-                return true;
+            const urlMatch =
+                PROMO_IMAGE_URL_BLOCKLIST.some(
+                    pattern =>
+                    src.includes(pattern)
+                );
+            const classMatch =
+                image instanceof HTMLImageElement &&
+                PROMO_IMAGE_CLASS_BLOCKLIST.some(
+                    pattern =>
+                    image.closest(
+                        `[class*="${pattern}"]`
+                    )
+                );
+            const isPromo =
+                urlMatch || classMatch;
+            if (
+                isPromo &&
+                !state.images.loggedPromoImages.has(src)
+            ) {
+                state.images.loggedPromoImages.add(src);
+                console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - PROMO IMAGE: ${src}`);
             }
-            if (PROMO_IMAGE_CLASS_BLOCKLIST.some(p =>
-                    img.closest(`[class*="${p}"]`)
-                )) {
-                return true;
-            }
-            return false;
+            return isPromo;
         } catch {
             return false;
         }
@@ -1076,35 +1304,53 @@
         const popup = document.createElement('div');
         popup.className = 'download-popup';
         popup.innerHTML = `
-            <div class="download-popup-title"><strong>${SCRIPT_NAME_DEBUG}</strong></div>
-            <div class="download-popup-version">
+            <div class="download-popup-title">${UI_ICON_SET.bookmark}${SCRIPT_NAME_DEBUG}</div>
+            <div class="download-popup-meta">
+                <span>v${SCRIPT_VERSION}</span>
+                <span class="download-popup-meta-sep">·</span>
                 <a href="https://github.com/OsborneLabs/Offline"
-                target="_blank"
-                rel="noopener noreferrer"
-                style="text-decoration: none !important;">
-                Osborne
-                </a>
-                &nbsp;·&nbsp;
-                v${SCRIPT_VERSION}
+                    target="_blank" rel="noopener noreferrer">Osborne</a>
             </div>
-            <div class="download-popup-outbound">
-                <a href="https://github.com/OsborneLabs/Offline/issues"
-                target="_blank"
-                rel="noopener noreferrer"
-                style="text-decoration: underline;">
-                Submit an issue
-                </a>
-            </div>
-            <div class="download-popup-outbound">
+            <div class="download-popup-meta">
                 <a href="https://greasyfork.org/en/scripts/568060-offline-for-lezhin"
-                target="_blank"
-                rel="noopener noreferrer"
-                style="text-decoration: underline;">
-                Update
+                    target="_blank" rel="noopener noreferrer"
+                    class="icon-tooltip" data-tooltip="Update">
+                    ${UI_ICON_SET.update}
                 </a>
+                <a href="https://github.com/OsborneLabs/Offline/issues"
+                    target="_blank" rel="noopener noreferrer"
+                    class="icon-tooltip" data-tooltip="Submit an issue">
+                    ${UI_ICON_SET.megaphone}
+                </a>
+                <a href="https://ko-fi.com/OsborneLabs"
+                    target="_blank" rel="noopener noreferrer"
+                    class="icon-tooltip" data-tooltip="Donate">
+                    ${UI_ICON_SET.heart}
+                </a>
+            </div>
+            <div class="download-popup-divider"></div>
+            <div class="download-popup-section-title">Downloads</div>
+            <div class="download-popup-setting-row">
+                <div class="download-popup-setting-text">
+                    <div class="download-popup-setting-label">Small image size</div>
+                    <div class="download-popup-setting-highlight">
+                    <div>Saves files in .webp format</div>
+                </div>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="toggle-small-file-size">
+                    <span class="switch-track"></span>
+                    <span class="switch-thumb"></span>
+                </label>
             </div>
         `;
         document.body.appendChild(popup);
+        const savedSmallFileSize = localStorage.getItem(STORAGE_KEY_SMALL_FILE_SIZE) === 'true';
+        const smallFileSizeToggle = popup.querySelector('#toggle-small-file-size');
+        smallFileSizeToggle.checked = savedSmallFileSize;
+        smallFileSizeToggle.addEventListener('change', () => {
+            localStorage.setItem(STORAGE_KEY_SMALL_FILE_SIZE, String(smallFileSizeToggle.checked));
+        });
         let showTimer = null;
         let hideTimer = null;
 
@@ -1122,17 +1368,17 @@
         btn.addEventListener('mouseenter', () => {
             if (btn.disabled) return;
             clearTimeout(hideTimer);
-            showTimer = setTimeout(showPopup, 1000);
+            showTimer = setTimeout(showPopup, 500);
         });
         btn.addEventListener('mouseleave', () => {
             clearTimeout(showTimer);
-            hideTimer = setTimeout(hidePopup, 50);
+            hideTimer = setTimeout(hidePopup, 75);
         });
         popup.addEventListener('mouseenter', () => {
             clearTimeout(hideTimer);
         });
         popup.addEventListener('mouseleave', () => {
-            hideTimer = setTimeout(hidePopup, 50);
+            hideTimer = setTimeout(hidePopup, 75);
         });
     }
 
@@ -1199,52 +1445,119 @@
     }
 
     function validateCollectedPageCount(collectedCount) {
-        const renderType = state.viewer.type;
-        const renderTypeLabel = (renderType || 'UNKNOWN').toUpperCase();
-        let total;
-        try {
-            total = getTotalPageCount();
-        } catch {
-            total = getIndexedComicCuts().length;
+        function getPromoCount() {
+            return getIndexedComicCuts()
+                .filter(cut => {
+                    const img = cut.querySelector('img');
+                    return isPromoImage(img);
+                })
+                .length;
         }
-        const expected = collectedCount;
-        const promoCount = Math.max(0, total - collectedCount);
+        const renderType = state.viewer.type;
+        const renderTypeLabel =
+            (renderType || 'UNKNOWN').toUpperCase();
+        const useSmallFileSize =
+            localStorage.getItem(
+                STORAGE_KEY_SMALL_FILE_SIZE
+            ) === 'true';
+        const layout = getViewerLayoutConfig();
+        const isDeterministic =
+            renderType === 'blob' &&
+            layout.pageSource === 'cuts';
+        let total, promoCount, expected;
+        if (isDeterministic) {
+            total = getAllPageIndexes().length;
+            promoCount = Math.max(
+                0,
+                total - collectedCount
+            );
+            expected = collectedCount;
+        } else {
+            try {
+                total = getTotalPageCount();
+            } catch {
+                total = getIndexedComicCuts().length;
+            }
+            promoCount = getPromoCount();
+            expected = total - promoCount;
+        }
         console.debug(
             `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ` +
             `TOTAL IMAGES: ${total} | ` +
             `PROMO IMAGES: ${promoCount} | ` +
-            `EXPECTED IMAGES: ${expected} | ` +
+            (!isDeterministic ?
+                `EXPECTED IMAGES: ${expected} | ` :
+                '') +
             `COLLECTED IMAGES: ${collectedCount} | ` +
-            `FINAL RENDERING METHOD: ${renderTypeLabel}`
+            `SMALL FILE SIZE: ${useSmallFileSize ? 'TRUE' : 'FALSE'} | ` +
+            `FINAL RENDER METHOD: ${renderTypeLabel}`
         );
         return collectedCount === expected;
     }
 
     function validateCollectedImages(session, images) {
+        function filterPromoImages(images) {
+            return images.filter(item => {
+                if (typeof item === 'string') {
+                    return !isPromoImage({
+                        src: item,
+                        closest: () => null
+                    });
+                }
+                if (item instanceof HTMLImageElement) {
+                    return !isPromoImage(item);
+                }
 
-        function debugLogWithUrl(message) {
-            console.debug(`${message} · ${location.href}`);
+                return true;
+            });
         }
         if (session.cancelled) {
             throwDownloadError('DOWNLOAD_ABORTED');
         }
         if (!images || !images.length) {
-            debugLogWithUrl(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ERROR OCCURED: NO_IMAGES_COLLECTED`);
-            throwDownloadError('NO_IMAGES_COLLECTED');
+            console.debug(
+                `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ERROR: NO_IMAGES_COLLECTED`
+            );
+            throwDownloadError(
+                'NO_IMAGES_COLLECTED'
+            );
         }
-        const isValidCount = validateCollectedPageCount(images.length);
+        images = filterPromoImages(images);
+        const isValidCount =
+            validateCollectedPageCount(images.length);
         if (!isValidCount) {
-            debugLogWithUrl(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ERROR OCCURED: IMAGE_COUNT_MISMATCH`);
-            throwDownloadError('IMAGE_COUNT_MISMATCH');
+            console.debug(
+                `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ERROR: IMAGE_COUNT_MISMATCH`
+            );
+            throwDownloadError(
+                'IMAGE_COUNT_MISMATCH'
+            );
         }
         return images;
     }
 
     function findMissingPages(collectedMap) {
-        if (!(collectedMap instanceof Map)) return [];
-        const collected = new Set(collectedMap.keys());
-        const expected = getAllPageIndexes();
-        return expected.filter(index => !collected.has(index));
+        function getExpectedComicIndexes() {
+            return getIndexedComicCuts()
+                .filter(cut => {
+                    const img = cut.querySelector('img');
+                    return !isPromoImage(img);
+                })
+                .map(cut =>
+                    Number(cut.dataset.cutIndex)
+                )
+                .filter(Number.isFinite);
+        }
+        if (!(collectedMap instanceof Map)) {
+            return [];
+        }
+        const collected =
+            new Set(collectedMap.keys());
+        const expected =
+            getExpectedComicIndexes();
+        return expected.filter(index =>
+            !collected.has(index)
+        );
     }
 
     async function retryMissingPages(
@@ -1259,60 +1572,95 @@
             nudgeScroll = false
         } = {}
     ) {
-        let previousMissingCount = Infinity;
+        let previousMissingKey = null;
         const delayMs = scrollDelay;
-        for (let attempt = 0; attempt < maxAttempts && !session.cancelled; attempt++) {
+        for (
+            let attempt = 0; attempt < maxAttempts && !session.cancelled; attempt++
+        ) {
             const missing = findMissingPages(collectedMap);
-            if (!missing.length) break;
-            if (missing.length >= previousMissingCount) break;
-            previousMissingCount = missing.length;
-            if (beforeAttempt) await beforeAttempt(missing);
+            if (!missing.length) {
+                break;
+            }
+            const missingKey = missing.join(', ');
+            if (missingKey === previousMissingKey) {
+                break;
+            }
+            previousMissingKey = missingKey;
+            if (beforeAttempt) {
+                await beforeAttempt(missing);
+            }
             for (const index of missing) {
-                if (session.cancelled) break;
+                if (session.cancelled) {
+                    break;
+                }
                 scrollToComicPage(index, {
                     instant: true,
                     allowLastPage: false
                 });
-                await new Promise(r => setTimeout(r, delayMs));
-                onProgress(collectedMap.size, null);
+                await new Promise(r =>
+                    setTimeout(r, delayMs)
+                );
+                onProgress?.(collectedMap.size, null);
             }
             if (nudgeScroll) {
                 window.scrollBy(0, 1);
                 window.scrollBy(0, -1);
             }
-            if (afterAttempt) await afterAttempt(missing);
+            if (afterAttempt) {
+                await afterAttempt(missing);
+            }
             if (idleWait) {
                 const isFirstRetry = attempt === 0;
                 const fewMissing = missing.length <= 2;
                 await waitForCanvasIdle(
-                    isFirstRetry ? 250 : (fewMissing ? 120 : 150),
-                    isFirstRetry ? 900 : (fewMissing ? 400 : 500)
+                    isFirstRetry ?
+                    250 :
+                    (fewMissing ? 120 : 150),
+                    isFirstRetry ?
+                    900 :
+                    (fewMissing ? 400 : 500)
                 );
             }
         }
+        const finalMissing = findMissingPages(collectedMap);
+        return finalMissing;
     }
 
     async function collectWebpPages(session, onProgress) {
         const wrapper = getViewerContainer();
-        if (!wrapper || session.cancelled) return [];
+        if (!wrapper || session.cancelled) {
+            return {
+                images: [],
+                switchTo: null
+            };
+        }
         state.ui.images.clear();
-        const promoCheck = isPromoImage;
         const special = getViewerLayoutConfig();
         const cutsToUse = special.enabled ?
             special.safeCuts :
             getIndexedComicCuts();
         const stableCuts = [...cutsToUse];
 
-        function waitForImageInjection(cut, timeout = 1500) {
+        function waitForImageInjection(
+            cut,
+            timeout = 1500
+        ) {
             return new Promise(resolve => {
                 const start = performance.now();
 
                 function check() {
                     const img = cut.querySelector('img');
-                    if (img && img.src && !img.src.startsWith('blob:')) {
+                    if (
+                        img &&
+                        img.src &&
+                        !img.src.startsWith('blob:')
+                    ) {
                         return resolve(true);
                     }
-                    if (performance.now() - start > timeout) {
+                    if (
+                        performance.now() - start >
+                        timeout
+                    ) {
                         return resolve(false);
                     }
                     requestAnimationFrame(check);
@@ -1321,25 +1669,72 @@
             });
         }
         for (const cut of stableCuts) {
-            if (session.cancelled || state.ui.phase !== 'collecting') break;
-            const index = Number(cut.dataset.cutIndex);
-            if (!Number.isFinite(index)) continue;
+            if (
+                session.cancelled ||
+                state.ui.phase !== 'collecting'
+            ) {
+                break;
+            }
+            const index =
+                Number(cut.dataset.cutIndex);
+            if (!Number.isFinite(index)) {
+                continue;
+            }
             scrollToComicPage(index, {
                 instant: true
             });
-            await waitForImageInjection(cut, 1500);
-            const img = [...cut.querySelectorAll('img')].find(i =>
-                i.src &&
-                !i.src.startsWith('blob:') &&
-                !promoCheck(i)
+            await waitForImageInjection(
+                cut,
+                1500
             );
-            if (img && !state.ui.images.has(index)) {
-                state.ui.images.set(index, img.src);
-                onProgress(state.ui.images.size);
+            const liveWrapper =
+                getViewerContainer();
+            if (liveWrapper) {
+                if (
+                    liveWrapper.querySelector(
+                        'canvas'
+                    )
+                ) {
+                    setRenderType('canvas');
+                    console.log(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - RENDER TYPE OVERRIDE: WEBP --> %cCANVAS`, 'font-weight:bold;');
+                    return {
+                        images: null,
+                        switchTo: 'canvas'
+                    };
+                }
+                if (
+                    liveWrapper.querySelector("img[src^='blob:']")
+                ) {
+                    setRenderType('blob');
+                    console.log(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - RENDER TYPE OVERRIDE: WEBP --> %cBLOB`, 'font-weight:bold;');
+                    return {
+                        images: null,
+                        switchTo: 'blob'
+                    };
+                }
+            }
+            const img = [...cut.querySelectorAll('img')]
+                .find(i =>
+                    i.src &&
+                    !i.src.startsWith('blob:')
+                );
+            if (
+                img &&
+                !state.ui.images.has(index)
+            ) {
+                state.ui.images.set(
+                    index,
+                    img.src
+                );
+                onProgress(
+                    state.ui.images.size
+                );
             }
         }
-        return session.cancelled ? [] :
-            getOrderedWebpPageList();
+        return {
+            images: session.cancelled ? [] : getOrderedWebpPageList(),
+            switchTo: null
+        };
     }
 
     async function collectHorizontalWebpPages(session, onProgress) {
@@ -1349,7 +1744,7 @@
             '[role="slider"][data-max][data-value]'
         );
         if (!wrapper || !sliderBtn || session.cancelled) {
-            console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - CHAPTER SLIDER OR BUTTON NOT FOUND`);
+            console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - UI SLIDER NOT FOUND FOR HORIZONTAL LAYOUT`);
             return [];
         }
         const getIndex = () => Number(sliderBtn.getAttribute('data-value'));
@@ -1656,7 +2051,7 @@
             .sort((a, b) => a.pageIndex - b.pageIndex);
     }
 
-    async function convertCanvasToPng(page) {
+    async function convertCanvasPage(page, mimeType = 'image/png', quality = undefined) {
         const webpBytes = await getImageData(page.url);
         const blob = new Blob([webpBytes], {
             type: 'image/webp'
@@ -1689,25 +2084,27 @@
             canvas.toBlob(async blob => {
                 const buf = await blob.arrayBuffer();
                 resolve(new Uint8Array(buf));
-            }, 'image/png');
+            }, mimeType, quality);
         });
     }
 
-    async function streamCanvasImagesToZip(session, pages, zip, onProgress) {
+    async function streamCanvasImagesToZip(session, pages, zip, onProgress, useSmallFileSize = false) {
         const total = pages.length;
         let completed = 0;
         onProgress(0, total);
         const workerCount = getOptimalWorkerCount();
+        const mimeType = useSmallFileSize ? 'image/webp' : 'image/png';
+        const ext = useSmallFileSize ? 'webp' : 'png';
         await taskQueue(workerCount, pages, async (page, index) => {
             if (session.cancelled) return;
-            const png = await convertCanvasToPng(page);
-            if (!png || session.cancelled) return;
-            const name = generateImageFileName(index + 1, total, 'png');
+            const imgData = await convertCanvasPage(page, mimeType);
+            if (!imgData || session.cancelled) return;
+            const name = generateImageFileName(index + 1, total, ext);
             const file = new fflate.ZipDeflate(name, {
                 level: 6
             });
             zip.add(file);
-            file.push(png, true);
+            file.push(imgData, true);
             completed++;
             onProgress(completed, total);
         });
@@ -1735,7 +2132,7 @@
                 const img = el.querySelector('img[src^="blob:"]');
                 if (!img || !img.complete) return;
                 state.blob.pages.set(index, img);
-                console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - BACKGROUND BLOB COLLECTED: ${index}`);
+                console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - BLOB IMAGE COLLECTED: ${index}`);
             });
         }
         const observer = new MutationObserver(() => {
@@ -1750,10 +2147,46 @@
         captureVisibleBlobs();
     }
 
-    async function collectBlobPages(session, onProgress, expectedCount = null) {
+    async function collectBlobPages(
+        session,
+        onProgress,
+        expectedCount = null
+    ) {
+        function formatPageRanges(pages) {
+            if (!pages.length) {
+                return '';
+            }
+            const sorted = [...pages].sort(
+                (a, b) => a - b
+            );
+            const ranges = [];
+            let start = sorted[0];
+            let end = sorted[0];
+            for (
+                let i = 1; i < sorted.length; i++
+            ) {
+                const current = sorted[i];
+                if (current === end + 1) {
+                    end = current;
+                    continue;
+                }
+                ranges.push(
+                    start === end ?
+                    `${start}` :
+                    `${start}-${end}`
+                );
+                start = end = current;
+            }
+            ranges.push(
+                start === end ?
+                `${start}` :
+                `${start}-${end}`
+            );
+            return ranges.join(', ');
+        }
         async function collectBlobPagesDeterministic() {
             const WAIT_AFTER_SCROLL_MS = 250;
-            const STALL_TIMEOUT_MS = 800;
+            const STALL_TIMEOUT_MS = 3000;
             const collected = new Map();
             const layout = getViewerLayoutConfig();
             let lastCount = 0;
@@ -1761,7 +2194,10 @@
 
             function getPageContainers() {
                 for (const selector of RENDER_PAGE_SELECTORS) {
-                    const nodes = document.querySelectorAll(selector);
+                    const nodes =
+                        document.querySelectorAll(
+                            selector
+                        );
                     if (nodes.length) {
                         return nodes;
                     }
@@ -1769,116 +2205,248 @@
                 return [];
             }
 
-            function extractHydratedBlobs(containers) {
+            function extractHydratedBlobs(
+                containers
+            ) {
                 const results = [];
                 containers.forEach((el, i) => {
-                    const img = el.querySelector('img[src^="blob:"]');
+                    const img = el.querySelector(
+                        'img[src^="blob:"]'
+                    );
                     if (!img) return;
                     if (!img.complete) return;
-                    const index = i + 1;
                     results.push({
-                        index,
+                        index: i + 1,
                         img
                     });
                 });
                 return results;
             }
 
-            function scrollToFirstMissing(totalContainers) {
-                const allIndexes = [...Array(totalContainers).keys()].map(i => i + 1);
-                const firstMissing = allIndexes.find(i => !collected.has(i));
-                if (firstMissing == null) return;
-                const isLast = firstMissing >= totalContainers;
-                if (layout.scroll.preventLastScroll && isLast) {
+            function scrollToFirstMissing(
+                totalContainers
+            ) {
+                const allIndexes = [
+                    ...Array(totalContainers).keys()
+                ].map(i => i + 1);
+                const firstMissing =
+                    allIndexes.find(
+                        i => !collected.has(i)
+                    );
+                if (firstMissing == null) {
                     return;
                 }
-                scrollToComicPage(firstMissing, {
-                    instant: true,
-                    allowLastPage: !layout.scroll.preventLastScroll
-                });
+                const isLast =
+                    firstMissing >= totalContainers;
+                if (
+                    layout.scroll
+                    .preventLastScroll &&
+                    isLast
+                ) {
+                    return;
+                }
+                scrollToComicPage(
+                    firstMissing, {
+                        instant: true,
+                        allowLastPage:
+                            !layout.scroll
+                            .preventLastScroll
+                    }
+                );
             }
             while (!session.cancelled) {
-                const containers = getPageContainers();
-                const totalContainers = containers.length;
-                const blobs = extractHydratedBlobs(containers);
-                blobs.forEach(({
-                    index,
-                    img
-                }) => {
-                    if (!collected.has(index)) {
-                        collected.set(index, img);
+                const containers =
+                    getPageContainers();
+                const totalContainers =
+                    containers.length;
+                const blobs =
+                    extractHydratedBlobs(
+                        containers
+                    );
+                blobs.forEach(
+                    ({
+                        index,
+                        img
+                    }) => {
+                        if (
+                            !collected.has(index)
+                        ) {
+                            collected.set(
+                                index,
+                                img
+                            );
+                        }
                     }
-                });
+                );
                 onProgress?.(collected.size);
-                if (totalContainers > 0) {
-                    const promoContainers = [...containers].filter(el => {
-                        const img = el.querySelector('img');
-                        if (!img || !img.src) return false;
-                        if (!img.src.startsWith('blob:') && isPromoImage(img)) return true;
-                        const dataSrc = el.dataset.src || '';
-                        if (dataSrc && isPromoImage({
-                                src: dataSrc,
-                                closest: () => null
-                            })) return true;
-                        return false;
-                    }).length;
-                    if (collected.size >= totalContainers - promoContainers) {
-                        break;
-                    }
+                if (
+                    totalContainers > 0 &&
+                    collected.size >=
+                    totalContainers
+                ) {
+                    break;
                 }
-                if (collected.size === lastCount) {
-                    if (performance.now() - lastProgressTs > STALL_TIMEOUT_MS) {
+                if (
+                    collected.size ===
+                    lastCount
+                ) {
+                    if (
+                        performance.now() -
+                        lastProgressTs >
+                        STALL_TIMEOUT_MS
+                    ) {
+                        console.warn(
+                            `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ` +
+                            `BLOB COLLECTION STALLED AT ` +
+                            `${collected.size}/${totalContainers}`
+                        );
                         break;
                     }
                 } else {
-                    lastProgressTs = performance.now();
-                    lastCount = collected.size;
+                    lastProgressTs =
+                        performance.now();
+                    lastCount =
+                        collected.size;
                 }
-                if (collected.size < totalContainers) {
-                    scrollToFirstMissing(totalContainers);
+                if (
+                    collected.size <
+                    totalContainers
+                ) {
+                    scrollToFirstMissing(
+                        totalContainers
+                    );
                     await new Promise(r =>
-                        setTimeout(r, WAIT_AFTER_SCROLL_MS)
+                        setTimeout(
+                            r,
+                            WAIT_AFTER_SCROLL_MS
+                        )
                     );
                 }
             }
             return collected;
         }
-        const collected = await collectBlobPagesDeterministic();
-        for (const [index, img] of collected.entries()) {
-            if (!state.blob.pages.has(index)) {
-                state.blob.pages.set(index, img);
+        const collected =
+            await collectBlobPagesDeterministic();
+        for (const [
+                index,
+                img
+            ] of collected.entries()) {
+            if (
+                !state.blob.pages.has(index)
+            ) {
+                state.blob.pages.set(
+                    index,
+                    img
+                );
             }
         }
-        let previousMissingCount = Infinity;
-        for (let attempt = 0; attempt < 4 && !session.cancelled; attempt++) {
-            const missing = findMissingPages(state.blob.pages);
-            if (!missing.length) break;
-            if (missing.length >= previousMissingCount) break;
-            previousMissingCount = missing.length;
+        const BLOB_RETRY_ATTEMPTS = 4;
+        let previousMissingKey = null;
+        for (
+            let attempt = 0; attempt <
+            BLOB_RETRY_ATTEMPTS &&
+            !session.cancelled; attempt++
+        ) {
+            const missing =
+                findMissingPages(
+                    state.blob.pages
+                );
+            if (!missing.length) {
+                break;
+            }
+            const missingKey =
+                formatPageRanges(missing);
+            console.debug(
+                `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ` +
+                `RETRYING PAGE POSITIONS: ${missingKey}`
+            );
+            if (
+                missingKey ===
+                previousMissingKey
+            ) {
+                console.warn(
+                    `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ` +
+                    `BLOB RETRY STALLED. REMAINING PAGE POSITIONS: ${missingKey}`
+                );
+                break;
+            }
+            previousMissingKey =
+                missingKey;
             for (const index of missing) {
-                if (session.cancelled) break;
+                if (
+                    session.cancelled
+                ) {
+                    break;
+                }
                 scrollToComicPage(index, {
                     instant: true,
                     allowLastPage: false
                 });
-                await new Promise(r => setTimeout(r, 350));
-                const containers = (() => {
-                    for (const sel of RENDER_PAGE_SELECTORS) {
-                        const nodes = document.querySelectorAll(sel);
-                        if (nodes.length) return nodes;
+                await new Promise(r =>
+                    setTimeout(r, 750)
+                );
+                const containers =
+                    (() => {
+                        for (const sel of RENDER_PAGE_SELECTORS) {
+                            const nodes =
+                                document.querySelectorAll(
+                                    sel
+                                );
+                            if (
+                                nodes.length
+                            ) {
+                                return nodes;
+                            }
+                        }
+                        return [];
+                    })();
+                containers.forEach(
+                    (el, i) => {
+                        const idx = i + 1;
+                        if (
+                            state.blob.pages.has(
+                                idx
+                            )
+                        ) {
+                            return;
+                        }
+                        const img =
+                            el.querySelector(
+                                'img[src^="blob:"]'
+                            );
+                        if (
+                            img &&
+                            img.complete
+                        ) {
+                            state.blob.pages.set(
+                                idx,
+                                img
+                            );
+                            console.debug(
+                                `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ` +
+                                `RECOVERED MISSING BLOB PAGE ${idx}`
+                            );
+                            onProgress?.(
+                                state.blob.pages
+                                .size
+                            );
+                        }
                     }
-                    return [];
-                })();
-                containers.forEach((el, i) => {
-                    const idx = i + 1;
-                    if (state.blob.pages.has(idx)) return;
-                    const img = el.querySelector('img[src^="blob:"]');
-                    if (img && img.complete) {
-                        state.blob.pages.set(idx, img);
-                        if (onProgress) onProgress(state.blob.pages.size);
-                    }
-                });
+                );
             }
+        }
+        const finalMissing =
+            findMissingPages(
+                state.blob.pages
+            );
+        if (finalMissing.length) {
+            console.warn(
+                `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ` +
+                `BLOB RETRIES EXHAUSTED. MISSING PAGE POSITIONS: ` +
+                formatPageRanges(
+                    finalMissing
+                )
+            );
         }
         return state.blob.pages;
     }
@@ -2045,7 +2613,7 @@
             .map(([, img]) => img);
     }
 
-    async function convertBlobImageToPng(img) {
+    async function convertBlobImage(img, mimeType = 'image/png', quality = undefined) {
         if (img.decode) {
             try {
                 await img.decode();
@@ -2065,16 +2633,18 @@
             canvas.toBlob(async blob => {
                 const buf = await blob.arrayBuffer();
                 resolve(new Uint8Array(buf));
-            }, "image/png");
+            }, mimeType, quality);
         });
     }
 
-    async function buildBlobImageFiles(session, images, onProgress) {
+    async function buildBlobImageFiles(session, images, onProgress, useSmallFileSize = false) {
         const files = {};
         const total = images.length;
         onProgress(0, total);
         const workerCount = getOptimalWorkerCount();
         let completed = 0;
+        const mimeType = useSmallFileSize ? 'image/webp' : 'image/png';
+        const ext = useSmallFileSize ? 'webp' : 'png';
         const jobs = images.map((img, index) => ({
             img,
             index
@@ -2087,13 +2657,13 @@
                 index
             }) => {
                 if (session.cancelled) return null;
-                const pngData = await convertBlobImageToPng(img);
+                const imgData = await convertBlobImage(img, mimeType);
                 if (session.cancelled) return null;
                 completed++;
                 onProgress(completed, total);
                 return {
-                    name: generateImageFileName(index + 1, total, 'png'),
-                    data: pngData
+                    name: generateImageFileName(index + 1, total, ext),
+                    data: imgData
                 };
             }
         );
@@ -2258,6 +2828,7 @@
         if (state.ui.isDownloading) return;
         const renderType = resolveRenderType();
         if (!renderType) return;
+        const useSmallFileSize = localStorage.getItem(STORAGE_KEY_SMALL_FILE_SIZE) === 'true';
         state.ui.isDownloading = true;
         state.ui.phase = 'collecting';
         const session = startDownloadSession();
@@ -2290,25 +2861,97 @@
             await new Promise(r => setTimeout(r, 300));
             let files = null;
             if (renderType === 'webp') {
-                const images = isHorizontalViewerLayout() === 'kr' ?
-                    await collectHorizontalWebpPages(session, onCollect) :
+                const result = isHorizontalViewerLayout() === 'kr' ? {
+                        images: await collectHorizontalWebpPages(session, onCollect),
+                        switchTo: null
+                    } :
                     await collectWebpPages(session, onCollect);
-                validateCollectedImages(session, images);
-                await retryMissingPages(
-                    session,
-                    state.ui.images,
-                    onCollect
-                );
-                const finalImages = validateCollectedImages(
-                    session,
-                    getOrderedWebpPageList()
-                );
-                state.ui.phase = 'downloading';
-                files = await convertWebpPagesToJpeg(
-                    session,
-                    finalImages,
-                    onConvert
-                );
+                if (result.switchTo === 'canvas') {
+                    state.canvas.pages = new Map(state.canvas.buffer);
+                    state.canvas.buffer.clear();
+                    state.canvas.enabled = true;
+                    const cuts = getIndexedComicCuts();
+                    const total = cuts.length;
+                    for (const cut of cuts) {
+                        if (session.cancelled) break;
+                        scrollToComicPage(Number(cut.dataset.cutIndex), {
+                            instant: true
+                        });
+                        await new Promise(r => setTimeout(r, 300));
+                        onCollect(state.canvas.pages.size, total);
+                    }
+                    state.canvas.enabled = false;
+                    await retryMissingPages(session, state.canvas.pages, onCollect, {
+                        beforeAttempt: async () => {
+                            state.canvas.enabled = true;
+                        },
+                        afterAttempt: async () => {
+                            state.canvas.enabled = false;
+                        },
+                        idleWait: true,
+                        nudgeScroll: true
+                    });
+                    const canvasPages = [...state.canvas.pages.values()]
+                        .filter(p => p.ops.length)
+                        .sort((a, b) => a.pageIndex - b.pageIndex);
+                    const validCanvasPages = validateCollectedImages(session, canvasPages);
+                    state.ui.phase = 'downloading';
+                    const {
+                        zip: cZip,
+                        donePromise: cDone
+                    } = createZipInstance();
+                    const success = await streamCanvasImagesToZip(session, validCanvasPages, cZip, onConvert, useSmallFileSize);
+                    if (!success) throwDownloadError('DOWNLOAD_ABORTED');
+                    await finalizeZip(cZip, cDone);
+                    completed = true;
+                } else if (result.switchTo === 'blob') {
+                    state.blob.enabled = true;
+                    const layout = getViewerLayoutConfig();
+                    const expectedCount = layout.pageSource === 'cuts' ?
+                        getAllPageIndexes().length :
+                        getTotalPageCount();
+                    await collectBlobPages(session, onCollect, expectedCount);
+                    state.blob.enabled = false;
+                    const orderedBlobImages = validateCollectedImages(session, getOrderedBlobPageList(state.blob.pages));
+                    state.ui.phase = 'downloading';
+                    files = await buildBlobImageFiles(session, orderedBlobImages, onConvert, useSmallFileSize);
+                } else {
+                    const images = result.images;
+                    validateCollectedImages(session, images);
+                    await retryMissingPages(session, state.ui.images, onCollect);
+                    const finalImages = validateCollectedImages(session, getOrderedWebpPageList());
+                    state.ui.phase = 'downloading';
+                    if (useSmallFileSize) {
+                        files = {};
+                        const total = finalImages.length;
+                        let completedWebp = 0;
+                        onConvert(0, total);
+                        const workerCount = getOptimalWorkerCount();
+                        const jobs = finalImages.map((url, index) => ({
+                            url,
+                            index
+                        }));
+                        const results = await taskQueue(workerCount, jobs, async ({
+                            url,
+                            index
+                        }) => {
+                            if (session.cancelled) return null;
+                            const data = await getImageData(url);
+                            if (session.cancelled) return null;
+                            completedWebp++;
+                            onConvert(completedWebp, total);
+                            return {
+                                name: generateImageFileName(index + 1, total, 'webp'),
+                                data
+                            };
+                        });
+                        for (const r of results) {
+                            if (r) files[r.name] = r.data;
+                        }
+                    } else {
+                        files = await convertWebpPagesToJpeg(session, finalImages, onConvert);
+                    }
+                }
             }
             if (renderType === 'canvas') {
                 const pages = await collectCanvasPages(
@@ -2330,7 +2973,8 @@
                         session,
                         validPages,
                         zip,
-                        onConvert
+                        onConvert,
+                        useSmallFileSize
                     );
                 if (!success) {
                     throwDownloadError('DOWNLOAD_ABORTED');
@@ -2356,7 +3000,8 @@
                     files = await buildBlobImageFiles(
                         session,
                         orderedImages,
-                        onConvert
+                        onConvert,
+                        useSmallFileSize
                     );
                 } else {
                     const layout = getViewerLayoutConfig();
@@ -2395,11 +3040,12 @@
                     files = await buildBlobImageFiles(
                         session,
                         orderedImages,
-                        onConvert
+                        onConvert,
+                        useSmallFileSize
                     );
                 }
             }
-            if (renderType !== 'canvas') {
+            if (!completed && renderType !== 'canvas') {
                 if (session.cancelled || !files) {
                     throwDownloadError('DOWNLOAD_ABORTED');
                 }
@@ -2446,11 +3092,11 @@
             if (
                 completed &&
                 !sessionStorage.getItem(
-                    UI_AUTO_REFRESH_FLAG
+                    STORAGE_KEY_AUTO_REFRESH
                 )
             ) {
                 sessionStorage.setItem(
-                    UI_AUTO_REFRESH_FLAG,
+                    STORAGE_KEY_AUTO_REFRESH,
                     '1'
                 );
                 window.scrollTo({
