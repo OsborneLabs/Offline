@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      2.0.0
+// @version      2.0.1
 // @description  Downloads and saves Lezhin chapter images to a ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
@@ -559,6 +559,9 @@
             .update-icon, .megaphone-icon, .heart-icon {
                 display: block;
                 fill: var(--color-app-icon-default);
+            }
+            .download-button, .download-button *, .download-popup, .download-popup *, .lezhin-toast, .lezhin-toast * {
+                user-select: none !important;
             }
             body.lock-site-ui * {
                 pointer-events: none !important;
@@ -1461,12 +1464,17 @@
                 STORAGE_KEY_SMALL_FILE_SIZE
             ) === 'true';
         const layout = getViewerLayoutConfig();
+        const isHorizontalJpBlob =
+            renderType === 'blob' &&
+            isHorizontalViewerLayout() === 'jp';
         const isDeterministic =
             renderType === 'blob' &&
-            layout.pageSource === 'cuts';
+            (layout.pageSource === 'cuts' || isHorizontalJpBlob);
         let total, promoCount, expected;
         if (isDeterministic) {
-            total = getAllPageIndexes().length;
+            total = isHorizontalJpBlob
+                ? (() => { try { return getTotalPageCount(); } catch { return collectedCount; } })()
+                : getAllPageIndexes().length;
             promoCount = Math.max(
                 0,
                 total - collectedCount
@@ -1696,7 +1704,7 @@
                     )
                 ) {
                     setRenderType('canvas');
-                    console.log(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - RENDER TYPE OVERRIDE: WEBP --> %cCANVAS`, 'font-weight:bold;');
+                    console.log(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - RENDER METHOD OVERRIDE: WEBP --> %cCANVAS`, 'font-weight:bold;');
                     return {
                         images: null,
                         switchTo: 'canvas'
@@ -1706,7 +1714,7 @@
                     liveWrapper.querySelector("img[src^='blob:']")
                 ) {
                     setRenderType('blob');
-                    console.log(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - RENDER TYPE OVERRIDE: WEBP --> %cBLOB`, 'font-weight:bold;');
+                    console.log(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - RENDER METHOD OVERRIDE: WEBP --> %cBLOB`, 'font-weight:bold;');
                     return {
                         images: null,
                         switchTo: 'blob'
