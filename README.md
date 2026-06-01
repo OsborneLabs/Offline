@@ -1,4 +1,5 @@
-<p align=center><img src="https://gist.githubusercontent.com/OsborneLabs/2f07333f722fddbcb5998810148a40d5/raw/70a76e8ab7d07c78af75324462ff691961a08ce9/Offline.svg" width="95" height="95"></p>
+<p align=center><img src="https://raw.githubusercontent.com/gist/OsborneLabs/2ced0a941c3f667c3455d5274db48df0/raw/733352cc939ea14af1631ffc5e08b7da80274100/Offline.svg" width="85" height="85"></p>
+
 <h1 align=center>Offline</h1><br>
 
 ## Sites
