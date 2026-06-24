@@ -24,7 +24,7 @@ Offline runs here
       <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/a/a0/Firefox_logo%2C_2019.svg/1280px-Firefox_logo%2C_2019.svg.png" width="18" height="18">
     </td>
     <td align="center" valign="middle">
-      <img src="https://img.shields.io/badge/Version-v2.0.1-blue?style=for-the-badge">
+      <img src="https://img.shields.io/badge/Version-v2.1.0-blue?style=for-the-badge">
       <img src="https://img.shields.io/badge/Status-Stable-brightgreen?style=for-the-badge">
       <img src="https://img.shields.io/badge/License-GPL%203.0-orange?style=for-the-badge">
     </td>

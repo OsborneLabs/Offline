@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      2.0.1
+// @version      2.1.0
 // @description  Downloads and saves Lezhin chapter images to a ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
@@ -39,6 +39,7 @@
     const SCRIPT_VERSION = typeof GM_info !== 'undefined' ? GM_info.script.version : 'unknown';
     const STORAGE_KEY_AUTO_REFRESH = 'autoRefresh';
     const STORAGE_KEY_SMALL_FILE_SIZE = 'small-file-size';
+    const STORAGE_KEY_DIM_SCREEN = 'dim-screen';
     const UI_TOAST_DURATION_BY_SEVERITY = {
         normal: 10000,
         important: 30000,
@@ -50,13 +51,16 @@
         COLLECTING: c => c === 0 ? 'Starting...' : `Collecting: ${c}`,
         DOWNLOADING: (c, t) => `Downloading: ${c}/${t}`,
         CONVERTING: (c, t) => t && c >= t - 1 ? 'Finishing...' : c === 0 ? 'Converting...' : t ? `Converting: ${c}/${t}` : `Converting: ${c}`,
-        COMPLETE: 'Complete!'
+        COMPLETE: 'Complete!',
+        DIAG_DEFAULT: 'Run Diagnostic',
+        DIAGNOSING: 'Diagnosing...',
     };
     const UI_ICON_SET = {
         bookmark: `<svg class="bookmark-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28"><path d="M9.25 3.5C7.45507 3.5 6 4.95507 6 6.75V24.75C6 25.0348 6.16133 25.2951 6.41643 25.4217C6.67153 25.5484 6.97638 25.5197 7.20329 25.3475L14 20.1914L20.7967 25.3475C21.0236 25.5197 21.3285 25.5484 21.5836 25.4217C21.8387 25.2951 22 25.0348 22 24.75V6.75C22 4.95507 20.5449 3.5 18.75 3.5H9.25Z" fill="white"/></svg>`,
         heart: `<svg class="heart-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12.8198687,5.57958759 L11.9991485,6.40209417 L11.1758977,5.57884333 C9.07682963,3.47977526 5.67356786,3.47977526 3.5744998,5.57884333 C1.47543173,7.6779114 1.47543173,11.0811732 3.5744998,13.1802412 L11.4698687,21.0756101 C11.7627619,21.3685033 12.2376356,21.3685033 12.5305288,21.0756101 L20.4319958,13.1787767 C22.5263889,11.0727481 22.5299763,7.6790351 20.4305288,5.57958759 C18.3276384,3.4766972 14.9227559,3.47670037 12.8198687,5.57958759 Z"/></svg>`,
         megaphone: `<svg class="megaphone-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28"><path d="M26.0008 7.35334C26.0008 5.54646 24.2879 4.23059 22.5421 4.69622L4.04548 9.62939C2.84171 9.95045 2.00415 11.0407 2.00415 12.2865V15.7136C2.00415 16.9594 2.84171 18.0496 4.04548 18.3707L7 19.1587V19.5C7 21.9853 9.01472 24 11.5 24C13.2899 24 14.8357 22.955 15.5606 21.4419L22.5421 23.3039C24.2879 23.7695 26.0008 22.4536 26.0008 20.6468V7.35334ZM8.50057 19.5589L14.0722 21.0449C13.5474 21.9168 12.5918 22.5 11.5 22.5C9.86282 22.5 8.53195 21.1886 8.50057 19.5589Z"/></svg>`,
-        update: `<svg class="update-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g transform="rotate(90 12 12)"><path d="M7.94822962,5.02850432 C8.2831456,5.46765091 8.19865,6.09515261 7.75950341,6.4300686 C6.03254452,7.74713709 5,9.78703304 5,12 C5,15.4973075 7.56475199,18.395585 10.9159977,18.9165744 L10.2071068,18.2071068 C9.81658249,17.1834175 9.81658249,17.1834175 10.2071068,16.7928932 C10.5976311,16.4023689 11.2307961,16.4023689 11.6213203,16.7928932 L14.1213203,19.2928932 C14.5118446,19.6834175 14.5118446,20.3165825 14.1213203,20.7071068 L11.6213203,23.2071068 C11.2307961,23.5976311 10.5976311,23.5976311 10.2071068,23.2071068 C9.81658249,22.8165825 9.81658249,22.1834175 10.2071068,21.7928932 L11.0502786,20.9504867 C6.52614758,20.4760098 3,16.6497928 3,12 C3,9.15643984 4.32881972,6.5312223 6.54666534,4.83977811 C6.98581193,4.50486213 7.61331363,4.58935773 7.94822962,5.02850432 Z M9.87867966,3.29289322 L12.3786797,0.792893219 C12.7692039,0.402368927 13.4023689,0.402368927 13.7928932,0.792893219 C14.1533772,1.15337718 14.1811067,1.72060824 13.8760818,2.11289944 L13.7928932,2.20710678 L12.9497214,3.0495133 C17.4738524,3.52399021 21,7.35020716 21,12 C21,14.7198329 19.7848559,17.243156 17.7284056,18.9418543 C17.3026041,19.2935809 16.6722931,19.2335313 16.3205666,18.8077299 C15.96884,18.3819284 16.0288896,17.7516174 16.454691,17.3998909 C18.0559569,16.0771906 19,14.1168256 19,12 C19,8.50269253 16.435248,5.60441498 13.0840023,5.08342564 L13.7928932,5.79289322 C14.1834175,6.18341751 14.1834175,6.81658249 13.7928932,7.20710678 C13.4324093,7.56759074 12.8651782,7.59532028 12.472887,7.29029539 L12.3786797,7.20710678 L9.87867966,4.70710678 C9.51819569,4.34662282 9.49046616,3.77939176 9.79549105,3.38710056 L9.87867966,3.29289322 L12.3786797,0.792893219 L9.87867966,3.29289322 Z"/></g></svg>`
+        update: `<svg class="update-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g transform="rotate(90 12 12)"><path d="M7.94822962,5.02850432 C8.2831456,5.46765091 8.19865,6.09515261 7.75950341,6.4300686 C6.03254452,7.74713709 5,9.78703304 5,12 C5,15.4973075 7.56475199,18.395585 10.9159977,18.9165744 L10.2071068,18.2071068 C9.81658249,17.1834175 9.81658249,17.1834175 10.2071068,16.7928932 C10.5976311,16.4023689 11.2307961,16.4023689 11.6213203,16.7928932 L14.1213203,19.2928932 C14.5118446,19.6834175 14.5118446,20.3165825 14.1213203,20.7071068 L11.6213203,23.2071068 C11.2307961,23.5976311 10.5976311,23.5976311 10.2071068,23.2071068 C9.81658249,22.8165825 9.81658249,22.1834175 10.2071068,21.7928932 L11.0502786,20.9504867 C6.52614758,20.4760098 3,16.6497928 3,12 C3,9.15643984 4.32881972,6.5312223 6.54666534,4.83977811 C6.98581193,4.50486213 7.61331363,4.58935773 7.94822962,5.02850432 Z M9.87867966,3.29289322 L12.3786797,0.792893219 C12.7692039,0.402368927 13.4023689,0.402368927 13.7928932,0.792893219 C14.1533772,1.15337718 14.1811067,1.72060824 13.8760818,2.11289944 L13.7928932,2.20710678 L12.9497214,3.0495133 C17.4738524,3.52399021 21,7.35020716 21,12 C21,14.7198329 19.7848559,17.243156 17.7284056,18.9418543 C17.3026041,19.2935809 16.6722931,19.2335313 16.3205666,18.8077299 C15.96884,18.3819284 16.0288896,17.7516174 16.454691,17.3998909 C18.0559569,16.0771906 19,14.1168256 19,12 C19,8.50269253 16.435248,5.60441498 13.0840023,5.08342564 L13.7928932,5.79289322 C14.1834175,6.18341751 14.1834175,6.81658249 13.7928932,7.20710678 C13.4324093,7.56759074 12.8651782,7.59532028 12.472887,7.29029539 L12.3786797,7.20710678 L9.87867966,4.70710678 C9.51819569,4.34662282 9.49046616,3.77939176 9.79549105,3.38710056 L9.87867966,3.29289322 L12.3786797,0.792893219 L9.87867966,3.29289322 Z"/></g></svg>`,
+        trash: `<svg class="trash-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><path fill="white" d="M24,6.75 C27.3750735,6.75 30.1253119,9.4252368 30.245878,12.7708731 L30.25,13.0010013 L37,13 C37.9664983,13 38.75,13.7835017 38.75,14.75 C38.75,15.6681734 38.0428897,16.4211923 37.1435272,16.4941988 L37,16.5 L35.833,16.5 L34.2058308,38.0698451 C34.0385226,40.2866784 32.1910211,42 29.9678833,42 L18.0321167,42 C15.8089789,42 13.9614774,40.2866784 13.7941692,38.0698451 L12.166,16.5 L11,16.5 C10.0818266,16.5 9.32880766,15.7928897 9.2558012,14.8935272 L9.25,14.75 C9.25,13.8318266 9.95711027,13.0788077 10.8564728,13.0058012 L11,13 L17.75,13 C17.75,9.70163274 20.305017,7.00002168 23.5438239,6.76639376 L23.7708731,6.75412198 L24,6.75 Z M27.75,19.75 C27.1027913,19.75 26.5704661,20.2418747 26.5064536,20.8721948 L26.5,21 L26.5,33 L26.5064536,33.1278052 C26.5704661,33.7581253 27.1027913,34.25 27.75,34.25 C28.3972087,34.25 28.9295339,33.7581253 28.9935464,33.1278052 L29,33 L29,21 L28.9935464,20.8721948 C28.9295339,20.2418747 28.3972087,19.75 27.75,19.75 Z M20.25,19.75 C19.6027913,19.75 19.0704661,20.2418747 19.0064536,20.8721948 L19,21 L19,33 L19.0064536,33.1278052 C19.0704661,33.7581253 19.6027913,34.25 20.25,34.25 C20.8972087,34.25 21.4295339,33.7581253 21.4935464,33.1278052 L21.5,33 L21.5,21 L21.4935464,20.8721948 C21.4295339,20.2418747 20.8972087,19.75 20.25,19.75 Z M24.1675223,10.2550188 L24,10.25 C22.5374682,10.25 21.3415957,11.3917046 21.2550188,12.8324777 L21.2500002,13.0010036 L26.7500002,13 C26.7500002,11.5374682 25.6082954,10.3415957 24.1675223,10.2550188 Z"/></svg>`
     };
 
     const VIEWER_ALTERNATE_DOMAINS = [
@@ -111,6 +115,15 @@
         'div[class^="VerticalViewer_page_container"]'
     ];
 
+    const VIEWER_CONTAINER_SELECTORS = [
+        '[class^="CoreViewer_viewer_wrapper__"]',
+        'div.scroll-view',
+        'div[class^="ImageContainer__Container"]',
+        'div[class^="pageView__"]',
+        'div[class^="sc-"]',
+        'div[class^="scrollViewWrapper__"]'
+    ];
+
     const UI_PAGE_SELECTORS = {
         footer: 'div[class^="Footer_footerContainer__"]',
         sliders: [
@@ -142,7 +155,7 @@
         },
         IMAGE_REQUEST_FAILED: {
             code: 'image-request-failed',
-            message: 'Failed to request and download images',
+            message: 'Failed image request due to network',
             severity: 'normal'
         },
         JPEG_CONVERSION_FAILED: {
@@ -244,6 +257,7 @@
                 --color-app-button-disabled: #FF5254;
                 --color-app-button-hover: #C4161C;
                 --color-app-button-popup-default: rgba(22, 22, 22, 0.98);
+                --color-app-dim-overlay: rgba(0, 0, 0, 0.55);
                 --color-app-divider: rgba(255, 255, 255, 0.08);
                 --color-app-icon-bookmark: white;
                 --color-app-icon-default: rgba(255, 255, 255, 0.45);
@@ -257,12 +271,13 @@
                 --color-app-text-default: white;
                 --color-app-text-muted: rgba(255, 255, 255, 0.45);
                 --color-app-text-secondary: rgba(255, 255, 255, 0.70);
+                --font-app-default: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
                 --size-app-button-height: 28px;
                 --size-text-button-default: 13px;
                 --size-text-popup-meta-default: 11px;
                 --size-text-popup-section-highlight: 11px;
                 --size-text-popup-section-label: 12px;
-                --size-text-popup-title-default: 17px;
+                --size-text-popup-title-default: 19px;
                 --size-text-toast-default: 15px;
             }
             @font-face {
@@ -272,13 +287,15 @@
                 font-display: swap;
                 src: url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3/packages/pretendard/dist/web/variable/woff2-dynamic-subset/PretendardVariable.subset.91.woff2') format('woff2');
             }
-            @keyframes toast-slide-in {
-                from { opacity: 0; transform: translateY(-10px); }
-                to { opacity: 1; transform: translateY(0); }
+            @keyframes toast-in {
+                0% { opacity: 0; transform: translateY(-16px) scale(0.96); }
+                60% { opacity: 1; transform: translateY(2px) scale(1.01); }
+                100% { opacity: 1; transform: translateY(0) scale(1); }
             }
-            @keyframes toast-slide-out {
-                from { opacity: 1; transform: translateY(0); }
-                to { opacity: 0; transform: translateY(-10px); }
+            @keyframes toast-out {
+                0% { opacity: 1; transform: translateY(0) scale(1); }
+                40% { opacity: 1; transform: translateY(2px) scale(1.01); }
+                100% { opacity: 0; transform: translateY(-16px) scale(0.96); }
             }
             #lezhin-toast-container {
                 display: flex;
@@ -292,38 +309,53 @@
                 pointer-events: none;
             }
             .lezhin-toast {
+                position: relative;
                 display: flex;
                 align-items: center;
-                justify-content: space-between;
+                justify-content: center;
                 min-width: 230px;
                 max-width: 360px;
-                padding: 11px 18px;
+                padding: 14px 18px;
+                border: none;
                 border-radius: 18px;
+                overflow: hidden;
                 font-size: var(--size-text-toast-default);
                 color: white;
-                background: var(--color-app-button-default);
-                box-shadow: 0 2px 12px rgba(0,0,0,0.25);
-                animation: toast-slide-in 0.2s ease-out;
+                background: rgba(60, 60, 65, 0.72);
+                backdrop-filter: blur(20px) saturate(180%);
+                -webkit-backdrop-filter: blur(20px) saturate(180%);
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), 0 1px 1px rgba(0, 0, 0, 0.1);
+                cursor: pointer;
+                opacity: 0;
+                animation: toast-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
                 pointer-events: auto;
-                user-select: none;
             }
             .lezhin-toast, .download-button, .download-popup {
-                font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                font-family: var(--font-app-default);
             }
             .lezhin-toast.closing {
-                animation: toast-slide-out 0.2s ease-in forwards;
+                animation: toast-out 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
             }
-            .lezhin-toast-close {
-                position: relative;
-                bottom: 1px;
-                padding-left: 10px;
-                border: none;
-                font-size: 21px;
-                line-height: 1;
-                color: white;
-                background: none;
-                cursor: pointer;
-                user-select: auto;
+            .lezhin-toast-text {
+                opacity: 1;
+                transition: opacity 0.1s linear 0.15s;
+            }
+            .lezhin-toast:hover .lezhin-toast-text {
+                opacity: 0;
+                transition: opacity 0.08s linear 0s;
+            }
+            .lezhin-toast-icon {
+                position: absolute;
+                inset: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                opacity: 0;
+                transition: opacity 0.1s linear 0s;
+            }
+            .lezhin-toast:hover .lezhin-toast-icon {
+                opacity: 1;
+                transition: opacity 0.15s linear 0.08s;
             }
             .download-button {
                 display: inline-flex;
@@ -360,7 +392,7 @@
             .download-popup {
                 position: fixed;
                 z-index: 9998;
-                width: 240px;
+                width: 400px;
                 padding: 16px;
                 border-radius: 20px;
                 color: white;
@@ -393,13 +425,9 @@
                 align-items: center;
                 gap: 6px;
                 margin-top: 0;
-                margin-bottom: 0;
+                margin-bottom: 14px;
                 font-size: var(--size-text-popup-meta-default);
                 color: var(--color-app-text-muted);
-            }
-            .download-popup-meta + .download-popup-meta {
-                margin-top: 2px;
-                margin-bottom: 14px;
             }
             .download-popup-meta a {
                 text-decoration: none;
@@ -430,7 +458,6 @@
                 align-items: center;
                 justify-content: space-between;
                 gap: 12px;
-                margin-bottom: 4px;
             }
             .download-popup-setting-text {
                 flex: 1;
@@ -447,6 +474,7 @@
                 font-size: var(--size-text-popup-section-highlight);
                 line-height: 1.4;
                 color: var(--color-app-text-secondary);
+                margin-bottom: 10px;
             }
             .switch {
                 flex-shrink: 0;
@@ -484,6 +512,48 @@
             .switch input:checked ~ .switch-thumb {
                 transform: translateX(15px);
             }
+            .diagnostic-button {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 100%;
+                height: var(--size-app-button-height);
+                padding: 6px 10px;
+                border: none;
+                border-radius: 8px;
+                font-family: var(--font-app-default);
+                font-size: var(--size-text-button-default);
+                font-weight: 500;
+                color: var(--color-app-text-secondary);
+                background: rgba(255, 255, 255, 0.07);
+                cursor: pointer;
+                transition: background-color 0.20s ease, color 0.20s ease;
+            }
+            .diagnostic-button:hover:not(:disabled) {
+                background: rgba(255, 255, 255, 0.12);
+                color: white;
+            }
+            .diagnostic-button:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+            }
+            .download-popup-sections {
+                display: flex;
+                align-items: stretch;
+                gap: 14px;
+            }
+            .download-popup-section {
+                flex: 1;
+                min-width: 0;
+            }
+            .download-popup-section-divider {
+                width: 1px;
+                flex-shrink: 0;
+                background: var(--color-app-divider);
+            }
+            .download-popup-section .download-popup-setting-row + .download-popup-setting-row {
+                margin-top: 12px;
+            }
             .icon-tooltip {
                 display: inline-flex;
                 align-items: center;
@@ -495,7 +565,7 @@
                 position: absolute;
                 bottom: calc(100% + 8px);
                 left: 50%;
-                z-index: 99999;
+                z-index: 9999;
                 padding: 6px 8px;
                 border-radius: 8px;
                 font-size: 11px;
@@ -512,7 +582,7 @@
                 position: absolute;
                 bottom: calc(100% + 3px);
                 left: 50%;
-                z-index: 99998;
+                z-index: 9998;
                 border: 5px solid transparent;
                 opacity: 0;
                 transform: translateX(-50%) translateY(4px);
@@ -556,12 +626,30 @@
             .heart-icon:hover {
                 fill: var(--color-app-icon-heart-hover);
             }
+            .trash-icon {
+                display: block;
+                width: 22px;
+                height: 22px;
+                flex-shrink: 0;
+            }
             .update-icon, .megaphone-icon, .heart-icon {
                 display: block;
                 fill: var(--color-app-icon-default);
             }
             .download-button, .download-button *, .download-popup, .download-popup *, .lezhin-toast, .lezhin-toast * {
                 user-select: none !important;
+            }
+            .lezhin-dim-overlay {
+                position: fixed;
+                inset: 0;
+                z-index: 9990;
+                background: var(--color-app-dim-overlay);
+                opacity: 0;
+                pointer-events: none;
+                transition: opacity 0.25s ease;
+            }
+            .lezhin-dim-overlay.visible {
+                opacity: 1;
             }
             body.lock-site-ui * {
                 pointer-events: none !important;
@@ -577,8 +665,9 @@
     function init() {
         sessionStorage.removeItem(STORAGE_KEY_AUTO_REFRESH);
         initScriptObservers();
-        createStyles();
         disableSiteTelemetry();
+        createStyles();
+        createDimOverlay();
         createDownloadButton();
     }
 
@@ -858,15 +947,7 @@
     }
 
     function getViewerContainer() {
-        const containers = [
-            '[class^="CoreViewer_viewer_wrapper__"]',
-            'div.scroll-view',
-            'div[class^="ImageContainer__Container"]',
-            'div[class^="pageView__"]',
-            'div[class^="sc-"]',
-            'div[class^="scrollViewWrapper__"]'
-        ];
-        for (const selector of containers) {
+        for (const selector of VIEWER_CONTAINER_SELECTORS) {
             const el = document.querySelector(selector);
             if (el) return el;
         }
@@ -1002,7 +1083,7 @@
                 !state.images.loggedPromoImages.has(src)
             ) {
                 state.images.loggedPromoImages.add(src);
-                console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - PROMO IMAGE: ${src}`);
+                console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - PROMO: ${src}`);
             }
             return isPromo;
         } catch {
@@ -1313,8 +1394,7 @@
                 <span class="download-popup-meta-sep">·</span>
                 <a href="https://github.com/OsborneLabs/Offline"
                     target="_blank" rel="noopener noreferrer">Osborne</a>
-            </div>
-            <div class="download-popup-meta">
+                <span class="download-popup-meta-sep">·</span>
                 <a href="https://greasyfork.org/en/scripts/568060-offline-for-lezhin"
                     target="_blank" rel="noopener noreferrer"
                     class="icon-tooltip" data-tooltip="Update">
@@ -1332,19 +1412,39 @@
                 </a>
             </div>
             <div class="download-popup-divider"></div>
-            <div class="download-popup-section-title">Downloads</div>
-            <div class="download-popup-setting-row">
-                <div class="download-popup-setting-text">
-                    <div class="download-popup-setting-label">Small image size</div>
-                    <div class="download-popup-setting-highlight">
-                    <div>Saves files in .webp format</div>
+            <div class="download-popup-sections">
+                <div class="download-popup-section">
+                    <div class="download-popup-section-title">Downloads</div>
+                    <div class="download-popup-setting-row">
+                        <div class="download-popup-setting-text">
+                            <div class="download-popup-setting-label">Dim screen</div>
+                            <div class="download-popup-setting-highlight">Lowers page brightness when downloading</div>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" id="toggle-dim-screen">
+                            <span class="switch-track"></span>
+                            <span class="switch-thumb"></span>
+                        </label>
+                    </div>
+                    <div class="download-popup-setting-row">
+                        <div class="download-popup-setting-text">
+                            <div class="download-popup-setting-label">Small image size</div>
+                            <div class="download-popup-setting-highlight">Downloads images as .webp: ~25% smaller</div>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" id="toggle-small-file-size">
+                            <span class="switch-track"></span>
+                            <span class="switch-thumb"></span>
+                        </label>
+                    </div>
                 </div>
+                <div class="download-popup-section-divider"></div>
+                <div class="download-popup-section">
+                    <div class="download-popup-section-title">Troubleshooting</div>
+                    <div class="download-popup-setting-label">Run a diagnostic</div>
+                    <div class="download-popup-setting-highlight">Simulates a chapter download and exports a debug log as a .log file</div>
+                    <button class="diagnostic-button" id="button-run-diagnostic">${UI_BUTTON_LABELS.DIAG_DEFAULT}</button>
                 </div>
-                <label class="switch">
-                    <input type="checkbox" id="toggle-small-file-size">
-                    <span class="switch-track"></span>
-                    <span class="switch-thumb"></span>
-                </label>
             </div>
         `;
         document.body.appendChild(popup);
@@ -1353,6 +1453,17 @@
         smallFileSizeToggle.checked = savedSmallFileSize;
         smallFileSizeToggle.addEventListener('change', () => {
             localStorage.setItem(STORAGE_KEY_SMALL_FILE_SIZE, String(smallFileSizeToggle.checked));
+        });
+        const savedDimScreen = isDimScreenEnabled();
+        const dimScreenToggle = popup.querySelector('#toggle-dim-screen');
+        dimScreenToggle.checked = savedDimScreen;
+        dimScreenToggle.addEventListener('change', () => {
+            localStorage.setItem(STORAGE_KEY_DIM_SCREEN, String(dimScreenToggle.checked));
+        });
+        const diagnosticButton = popup.querySelector('#button-run-diagnostic');
+        diagnosticButton.addEventListener('click', () => {
+            hidePopup();
+            executeDiagnosticPipeline(btn, diagnosticButton);
         });
         let showTimer = null;
         let hideTimer = null;
@@ -1371,7 +1482,7 @@
         btn.addEventListener('mouseenter', () => {
             if (btn.disabled) return;
             clearTimeout(hideTimer);
-            showTimer = setTimeout(showPopup, 500);
+            showTimer = setTimeout(showPopup, 250);
         });
         btn.addEventListener('mouseleave', () => {
             clearTimeout(showTimer);
@@ -1402,12 +1513,36 @@
         }, UI_BUTTON_RESET_DELAY_MS);
     }
 
+    function createDimOverlay() {
+        if (document.querySelector('.lezhin-dim-overlay')) return;
+        const overlay = document.createElement('div');
+        overlay.className = 'lezhin-dim-overlay';
+        document.body.appendChild(overlay);
+    }
+
+    function isDimScreenEnabled() {
+        return localStorage.getItem(STORAGE_KEY_DIM_SCREEN) !== 'false';
+    }
+
+    function showDimOverlay() {
+        if (!isDimScreenEnabled()) return;
+        const overlay = document.querySelector('.lezhin-dim-overlay');
+        if (overlay) overlay.classList.add('visible');
+    }
+
+    function hideDimOverlay() {
+        const overlay = document.querySelector('.lezhin-dim-overlay');
+        if (overlay) overlay.classList.remove('visible');
+    }
+
     function lockPageInteraction() {
         document.body.classList.add('lock-site-ui');
+        showDimOverlay();
     }
 
     function unlockPageInteraction() {
         document.body.classList.remove('lock-site-ui');
+        hideDimOverlay();
     }
 
     function lockPageScroll() {
@@ -1472,9 +1607,15 @@
             (layout.pageSource === 'cuts' || isHorizontalJpBlob);
         let total, promoCount, expected;
         if (isDeterministic) {
-            total = isHorizontalJpBlob
-                ? (() => { try { return getTotalPageCount(); } catch { return collectedCount; } })()
-                : getAllPageIndexes().length;
+            total = isHorizontalJpBlob ?
+                (() => {
+                    try {
+                        return getTotalPageCount();
+                    } catch {
+                        return collectedCount;
+                    }
+                })() :
+                getAllPageIndexes().length;
             promoCount = Math.max(
                 0,
                 total - collectedCount
@@ -1498,7 +1639,7 @@
                 '') +
             `COLLECTED IMAGES: ${collectedCount} | ` +
             `SMALL FILE SIZE: ${useSmallFileSize ? 'TRUE' : 'FALSE'} | ` +
-            `FINAL RENDER METHOD: ${renderTypeLabel}`
+            `FINAL RENDER METHOD: %c${renderTypeLabel}`, 'font-weight:bold;'
         );
         return collectedCount === expected;
     }
@@ -1704,7 +1845,7 @@
                     )
                 ) {
                     setRenderType('canvas');
-                    console.log(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - RENDER METHOD OVERRIDE: WEBP --> %cCANVAS`, 'font-weight:bold;');
+                    console.log(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - RENDER METHOD OVERRIDE: WEBP → %cCANVAS`, 'font-weight:bold;');
                     return {
                         images: null,
                         switchTo: 'canvas'
@@ -1714,7 +1855,7 @@
                     liveWrapper.querySelector("img[src^='blob:']")
                 ) {
                     setRenderType('blob');
-                    console.log(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - RENDER METHOD OVERRIDE: WEBP --> %cBLOB`, 'font-weight:bold;');
+                    console.log(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - RENDER METHOD OVERRIDE: WEBP → %cBLOB`, 'font-weight:bold;');
                     return {
                         images: null,
                         switchTo: 'blob'
@@ -2161,40 +2302,25 @@
         expectedCount = null
     ) {
         function formatPageRanges(pages) {
-            if (!pages.length) {
-                return '';
-            }
-            const sorted = [...pages].sort(
-                (a, b) => a - b
-            );
+            if (!pages.length) return '';
+            const sorted = [...pages].sort((a, b) => a - b);
             const ranges = [];
             let start = sorted[0];
             let end = sorted[0];
-            for (
-                let i = 1; i < sorted.length; i++
-            ) {
-                const current = sorted[i];
-                if (current === end + 1) {
-                    end = current;
-                    continue;
+            for (let i = 1; i < sorted.length; i++) {
+                if (sorted[i] === end + 1) {
+                    end = sorted[i];
+                } else {
+                    ranges.push(start === end ? `${start}` : `${start}-${end}`);
+                    start = end = sorted[i];
                 }
-                ranges.push(
-                    start === end ?
-                    `${start}` :
-                    `${start}-${end}`
-                );
-                start = end = current;
             }
-            ranges.push(
-                start === end ?
-                `${start}` :
-                `${start}-${end}`
-            );
+            ranges.push(start === end ? `${start}` : `${start}-${end}`);
             return ranges.join(', ');
         }
         async function collectBlobPagesDeterministic() {
             const WAIT_AFTER_SCROLL_MS = 250;
-            const STALL_TIMEOUT_MS = 3000;
+            const STALL_TIMEOUT_MS = 1500;
             const collected = new Map();
             const layout = getViewerLayoutConfig();
             let lastCount = 0;
@@ -2432,7 +2558,7 @@
                             );
                             console.debug(
                                 `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ` +
-                                `RECOVERED MISSING BLOB PAGE ${idx}`
+                                `RECOVERED MISSING BLOB: ${idx}`
                             );
                             onProgress?.(
                                 state.blob.pages
@@ -2731,37 +2857,23 @@
     function getOptimalWorkerCount() {
         const cores = navigator.hardwareConcurrency || 4;
         const memory = navigator.deviceMemory || 4;
-        const isMobile = isMobileDevice();
         let workers = Math.floor(cores / 2);
-        if (memory <= 2) {
-            workers = 2;
-        } else if (memory <= 4) {
-            workers = Math.min(workers, 3);
-        }
-        if (isMobile) {
-            workers = Math.min(workers, 3);
-        }
-        workers = Math.max(2, Math.min(6, workers));
-        return workers;
+        if (memory <= 2) workers = 2;
+        else if (memory <= 4) workers = Math.min(workers, 3);
+        if (isMobileDevice()) workers = Math.min(workers, 3);
+        return Math.max(2, Math.min(6, workers));
     }
 
     async function taskQueue(limit, items, worker) {
         const results = [];
         const executing = [];
-        const runWorker = worker;
         for (let i = 0; i < items.length; i++) {
-            const item = items[i];
-            const index = i;
-            const p = Promise.resolve().then(() => runWorker(item, index));
+            const p = Promise.resolve().then(() => worker(items[i], i));
             results.push(p);
             if (limit <= items.length) {
-                const e = p.then(() => {
-                    executing.splice(executing.indexOf(e), 1);
-                });
+                const e = p.then(() => executing.splice(executing.indexOf(e), 1));
                 executing.push(e);
-                if (executing.length >= limit) {
-                    await Promise.race(executing);
-                }
+                if (executing.length >= limit) await Promise.race(executing);
             }
         }
         return Promise.all(results);
@@ -2830,6 +2942,181 @@
                 }
             });
         });
+    }
+
+    async function executeDiagnosticPipeline(mainBtn, diagBtn) {
+        if (state.ui.isDownloading) return;
+        state.ui.isDownloading = true;
+        mainBtn.disabled = true;
+        mainBtn.textContent = UI_BUTTON_LABELS.DIAGNOSING;
+        diagBtn.disabled = true;
+        diagBtn.textContent = UI_BUTTON_LABELS.DIAGNOSING;
+        const diagLogs = [];
+        const diagStart = new Date();
+        const boolStr = v => v ? 'TRUE' : 'FALSE';
+        const originals = {};
+        ['log', 'debug', 'warn', 'error'].forEach(level => {
+            originals[level] = console[level].bind(console);
+            console[level] = function(...args) {
+                originals[level](...args);
+                const firstArg = typeof args[0] === 'string' ? args[0] : '';
+                if (!firstArg.includes(SCRIPT_NAME_DEBUG)) return;
+                const ts = new Date().toISOString().replace('T', ' ').slice(0, 23);
+                let fmt = firstArg;
+                const rest = args.slice(1);
+                const styleArgs = [];
+                fmt = fmt.replace(/%c/g, () => {
+                    styleArgs.push(rest.shift());
+                    return '';
+                });
+                const extras = rest.map(a => {
+                    if (typeof a === 'string') return a;
+                    try {
+                        return JSON.stringify(a);
+                    } catch {
+                        return String(a);
+                    }
+                });
+                const full = [fmt, ...extras].join(' ').trim();
+                const cleaned = full.replace(
+                    new RegExp(`${SCRIPT_NAME_DEBUG} v[\\d.]+ - `, 'g'), ''
+                );
+                diagLogs.push(`[${ts}] ${cleaned}`);
+            };
+        });
+        const restoreConsole = () => {
+            ['log', 'debug', 'warn', 'error'].forEach(level => {
+                console[level] = originals[level];
+            });
+        };
+        let viewerContainerMatched = 'NOT FOUND';
+        let totalPageCount = 'N/A';
+        let missingAfterScroll = [];
+        let didFail = false;
+        let caughtError = null;
+        let errorMessage = '';
+        try {
+            const session = startDownloadSession();
+            state.ui.activeDownload = session;
+            state.ui.phase = 'collecting';
+            lockPageScroll();
+            lockPageInteraction();
+            scrollToTop();
+            await new Promise(r => setTimeout(r, 300));
+            state.viewer.initialRenderingLogged = false;
+            const renderType = resolveRenderType();
+            if (renderType === 'webp') {
+                const result = isHorizontalViewerLayout() === 'kr' ? {
+                        images: await collectHorizontalWebpPages(session, () => {}),
+                        switchTo: null
+                    } :
+                    await collectWebpPages(session, () => {});
+                if (!result.switchTo) {
+                    await retryMissingPages(session, state.ui.images, () => {});
+                    missingAfterScroll = findMissingPages(state.ui.images);
+                }
+            } else if (renderType === 'canvas') {
+                await collectCanvasPages(session, () => {});
+                missingAfterScroll = findMissingPages(state.canvas.pages);
+            } else if (renderType === 'blob') {
+                if (isHorizontalViewerLayout() === 'jp') {
+                    const collected = await collectHorizontalBlobPages(session, () => {}, new Map(state.blob.pages));
+                    missingAfterScroll = findMissingPages(collected);
+                } else {
+                    const layout = getViewerLayoutConfig();
+                    const expectedCount = layout.pageSource === 'cuts' ?
+                        getAllPageIndexes().length :
+                        getTotalPageCount();
+                    await collectBlobPages(session, () => {}, expectedCount);
+                    missingAfterScroll = findMissingPages(state.blob.pages);
+                }
+            }
+            restoreConsole();
+            viewerContainerMatched = VIEWER_CONTAINER_SELECTORS.find(s => document.querySelector(s)) || 'NOT FOUND';
+            try {
+                totalPageCount = String(getTotalPageCount());
+            } catch {}
+        } catch (e) {
+            restoreConsole();
+            didFail = true;
+            caughtError = e;
+            errorMessage = (e?.message && DOWNLOAD_ERROR_INDEX[e.message]) ?
+                DOWNLOAD_ERROR_INDEX[e.message].message :
+                (e?.message || String(e));
+        }
+        const ts = diagStart.toISOString().replace('T', ' ').slice(0, 23);
+        const lines = [
+            `--- GENERATED ${ts} ---`,
+            '',
+            `SCRIPT NAME: ${SCRIPT_NAME_DEBUG}`,
+            `SCRIPT VERSION: v${SCRIPT_VERSION}`,
+            '',
+            'USER AGENT: ' + navigator.userAgent,
+            'CHAPTER URL: ' + location.href,
+            '',
+            '-- INITIAL DIAGNOSIS --',
+            '',
+            `Chapter Page: ${boolStr(isChapterPage())}`,
+            `Purchase Modal: ${boolStr(hasPurchaseModal())}`,
+            `Alternate Layout: ${boolStr(isAlternateViewerLayout())}`,
+            `Horizontal Layout: ${isHorizontalViewerLayout() || 'FALSE'}`,
+            `Mobile Device: ${boolStr(IS_MOBILE_DEVICE)}`,
+            `Render Type: ${(state.viewer.type || 'NULL').toUpperCase()}`,
+            '',
+            `getViewerContainer: { ${viewerContainerMatched} }`,
+            `getTotalPageCount: { ${totalPageCount} }`,
+            `getSeriesTitle: { ${getSeriesTitle()} }`,
+            `getSeriesChapter: { ${getSeriesChapter()} }`,
+            '',
+            `Footer Element Present: ${boolStr(!!document.querySelector(UI_PAGE_SELECTORS.footer))}`,
+            `Missing Indexes on Scroll: ${missingAfterScroll.length ? missingAfterScroll.join(', ') : 'NONE'}`,
+            `Refresh Key Present: ${boolStr(!!sessionStorage.getItem(STORAGE_KEY_AUTO_REFRESH))}`,
+            `Canvas Hook Active: ${boolStr(!!CanvasRenderingContext2D.prototype.__lezhinHooked)}`,
+            '',
+            '-- DEVELOPER CONSOLE --',
+            '',
+            ...diagLogs,
+            '',
+            '-- SUMMARY RESULTS --',
+            '',
+            didFail ?
+            'OVERALL: FAIL' :
+            `OVERALL: ${missingAfterScroll.length === 0 ? 'PASS' : `PARTIAL (missing: ${missingAfterScroll.join(', ')})`}`,
+            ...(didFail ? [`Error: ${errorMessage}`] : []),
+            ''
+        ];
+        try {
+            const blob = new Blob([lines.join('\n')], {
+                type: 'text/plain'
+            });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'Offline-Lezhin-Debug.log';
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch {}
+        if (didFail) {
+            handleDownloadError(caughtError);
+            diagBtn.textContent = UI_BUTTON_LABELS.DIAG_DEFAULT;
+            diagBtn.disabled = false;
+            mainBtn.textContent = UI_BUTTON_LABELS.DEFAULT;
+            mainBtn.disabled = false;
+        } else {
+            mainBtn.textContent = UI_BUTTON_LABELS.DEFAULT;
+            diagBtn.textContent = UI_BUTTON_LABELS.COMPLETE;
+            sessionStorage.setItem(STORAGE_KEY_AUTO_REFRESH, '1');
+            window.scrollTo({
+                top: 0,
+                behavior: 'smooth'
+            });
+            setTimeout(() => location.reload(), 700);
+        }
+        state.ui.phase = 'idle';
+        state.ui.isDownloading = false;
+        if (state.ui.activeDownload) state.ui.activeDownload = null;
+        unlockPageScroll();
+        unlockPageInteraction();
     }
 
     async function executeDownloadPipeline(btn) {
@@ -3243,16 +3530,15 @@
 
     function showToast(message, severity = 'normal') {
         createToastContainer();
-        const toast = document.createElement('div');
+        const toast = document.createElement('button');
+        toast.type = 'button';
         toast.className = 'lezhin-toast';
-        const text = document.createElement('span');
-        text.textContent = message;
-        const close = document.createElement('button');
-        close.className = 'lezhin-toast-close';
-        close.textContent = '×';
-        close.onclick = () => closeToast(toast);
-        toast.appendChild(text);
-        toast.appendChild(close);
+        toast.setAttribute('aria-label', 'Dismiss');
+        toast.innerHTML =
+            `<span class="lezhin-toast-text"></span>` +
+            `<span class="lezhin-toast-icon">${UI_ICON_SET.trash}</span>`;
+        toast.querySelector('.lezhin-toast-text').textContent = message;
+        toast.onclick = () => closeToast(toast);
         document
             .getElementById('lezhin-toast-container')
             .appendChild(toast);
@@ -3279,27 +3565,15 @@
 
     function throwDownloadError(error) {
         if (error instanceof Error) {
-            if (DOWNLOAD_ERROR_INDEX[error.message]) {
-                throw error;
-            }
-            throw new Error(
-                DOWNLOAD_ERROR_MAP.UNKNOWN_ERROR.code
-            );
+            if (DOWNLOAD_ERROR_INDEX[error.message]) throw error;
+            throw new Error(DOWNLOAD_ERROR_MAP.UNKNOWN_ERROR.code);
         }
-        if (error?.code) {
-            throw new Error(error.code);
-        }
+        if (error?.code) throw new Error(error.code);
         if (typeof error === 'string' && DOWNLOAD_ERROR_MAP[error]) {
-            throw new Error(
-                DOWNLOAD_ERROR_MAP[error].code
-            );
+            throw new Error(DOWNLOAD_ERROR_MAP[error].code);
         }
-        if (typeof error === 'string' && DOWNLOAD_ERROR_INDEX[error]) {
-            throw new Error(error);
-        }
-        throw new Error(
-            DOWNLOAD_ERROR_MAP.UNKNOWN_ERROR.code
-        );
+        if (typeof error === 'string' && DOWNLOAD_ERROR_INDEX[error]) throw new Error(error);
+        throw new Error(DOWNLOAD_ERROR_MAP.UNKNOWN_ERROR.code);
     }
 
     function handleDownloadError(error) {
