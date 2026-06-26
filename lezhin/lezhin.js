@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      2.1.0
+// @version      2.1.1
 // @description  Downloads and saves Lezhin chapter images to a ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
@@ -145,7 +145,7 @@
         },
         IMAGE_ACCESS_DENIED: {
             code: 'image-access-denied',
-            message: 'Image access expired. Refresh the page.',
+            message: 'Image access expired (refresh the page)',
             severity: 'important'
         },
         IMAGE_COUNT_MISMATCH: {
@@ -3048,11 +3048,10 @@
         const lines = [
             `--- GENERATED ${ts} ---`,
             '',
-            `SCRIPT NAME: ${SCRIPT_NAME_DEBUG}`,
-            `SCRIPT VERSION: v${SCRIPT_VERSION}`,
-            '',
-            'USER AGENT: ' + navigator.userAgent,
-            'CHAPTER URL: ' + location.href,
+            `SCRIPT_NAME: ${SCRIPT_NAME_DEBUG}`,
+            `SCRIPT_VERSION: v${SCRIPT_VERSION}`,
+            'USER_AGENT: ' + navigator.userAgent,
+            'CHAPTER_URL: ' + location.href,
             '',
             '-- INITIAL DIAGNOSIS --',
             '',
