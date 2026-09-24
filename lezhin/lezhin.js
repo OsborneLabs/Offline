@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      2.2.0
+// @version      2.2.1
 // @description  Downloads and saves Lezhin chapter images to a ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
@@ -3293,209 +3293,237 @@
 
     async function executeDiagnosticPipeline(mainBtn, diagBtn) {
         if (state.ui.isDownloading) return;
-        state.ui.isDownloading = true;
-        mainBtn.disabled = true;
-        mainBtn.textContent = UI_BUTTON_LABELS.DIAGNOSING;
-        diagBtn.disabled = true;
-        diagBtn.textContent = UI_BUTTON_LABELS.DIAGNOSING;
-        const diagStart = new Date();
-        state.diagnostics.active = true;
-        state.diagnostics.requests.clear();
-        state.images.loggedPromoImages.clear();
-        state.images.promoBlobImages.clear();
-        const boolStr = v => v ? 'TRUE' : 'FALSE';
-        const getDiagnosticDomains = () => {
-            const domains = new Set();
-            const entries = [
-                ...performance.getEntriesByType('resource'),
-                ...[...state.diagnostics.requests.values()].map(request => ({
-                    name: request.url
-                })),
-                ...state.diagnostics.consoleHistory.flatMap(line => [...line.matchAll(/\bGET:\s+(https?:\/\/[^\s]+)/g)]
-                    .map(match => ({
-                        name: match[1]
-                    })))
-            ];
-            entries.forEach(entry => {
-                try {
-                    const url = new URL(entry.name, location.href);
-                    if (!['http:', 'https:'].includes(url.protocol)) return;
-                    if (entry.initiatorType !== 'img' &&
-                        !/^image\//i.test(entry.contentType || '') &&
-                        !(/\.(?:avif|bmp|gif|ico|jpe?g|png|svg|webp|apng|jxl)$/i.test(url.pathname) &&
-                            !['script', 'audio', 'video'].includes(entry.initiatorType))) return;
-                    domains.add(url.hostname);
-                } catch {}
-            });
-            return [...domains].sort();
-        };
-        let viewerContainerMatched = 'NOT FOUND';
-        let totalPageCount = 'N/A';
-        let missingAfterScroll = [];
-        let didFail = false;
-        let caughtError = null;
-        let errorMessage = '';
+        const previousOverflow = document.body.style.overflow;
+        let session = null;
+        let completed = false;
         try {
-            const session = startDownloadSession();
-            state.ui.activeDownload = session;
-            state.ui.phase = 'collecting';
-            lockPageScroll();
-            lockPageInteraction();
-            scrollToTop();
-            await new Promise(r => setTimeout(r, 300));
-            state.viewer.initialRenderingLogged = false;
-            const renderType = resolveRenderType();
-            if (renderType === 'webp') {
-                const result = isHorizontalViewerLayout() === 'kr' ? {
-                        images: await collectHorizontalWebpPages(session, () => {}),
-                        switchTo: null
-                    } :
-                    await collectWebpPages(session, () => {});
-                if (!result.switchTo) {
-                    await retryMissingPages(session, state.ui.images, () => {});
-                    missingAfterScroll = findMissingPages(state.ui.images);
-                }
-            } else if (renderType === 'canvas') {
-                await collectCanvasPages(session, () => {});
-                missingAfterScroll = findMissingPages(state.canvas.pages);
-            } else if (renderType === 'blob') {
-                if (isHorizontalViewerLayout() === 'jp') {
-                    const collected = await collectHorizontalBlobPages(session, () => {}, new Map(state.blob.pages));
-                    missingAfterScroll = findMissingPages(collected);
-                } else {
-                    await collectBlobPages(session, () => {});
-                    missingAfterScroll = findMissingPages(state.blob.pages);
-                }
-            }
-            viewerContainerMatched = VIEWER_CONTAINER_SELECTORS.find(s => document.querySelector(s)) || 'NOT FOUND';
+            state.ui.isDownloading = true;
+            mainBtn.disabled = true;
+            mainBtn.textContent = UI_BUTTON_LABELS.DIAGNOSING;
+            diagBtn.disabled = true;
+            diagBtn.textContent = UI_BUTTON_LABELS.DIAGNOSING;
+            const diagStart = new Date();
+            state.diagnostics.active = true;
+            state.diagnostics.requests.clear();
+            state.images.loggedPromoImages.clear();
+            state.images.promoBlobImages.clear();
+            const boolStr = v => v ? 'TRUE' : 'FALSE';
+            const getDiagnosticDomains = () => {
+                const domains = new Set();
+                const entries = [
+                    ...performance.getEntriesByType('resource'),
+                    ...[...state.diagnostics.requests.values()].map(request => ({
+                        name: request.url
+                    })),
+                    ...state.diagnostics.consoleHistory.flatMap(line => [...line.matchAll(/\bGET:\s+(https?:\/\/[^\s]+)/g)]
+                        .map(match => ({
+                            name: match[1]
+                        })))
+                ];
+                entries.forEach(entry => {
+                    try {
+                        const url = new URL(entry.name, location.href);
+                        if (!['http:', 'https:'].includes(url.protocol)) return;
+                        if (entry.initiatorType !== 'img' &&
+                            !/^image\//i.test(entry.contentType || '') &&
+                            !(/\.(?:avif|bmp|gif|ico|jpe?g|png|svg|webp|apng|jxl)$/i.test(url.pathname) &&
+                                !['script', 'audio', 'video'].includes(entry.initiatorType))) return;
+                        domains.add(url.hostname);
+                    } catch {}
+                });
+                return [...domains].sort();
+            };
+            let viewerContainerMatched = 'NOT FOUND';
+            let totalPageCount = 'N/A';
+            let missingAfterScroll = [];
+            let didFail = false;
+            let caughtError = null;
+            let errorMessage = '';
             try {
-                totalPageCount = String(getTotalPageCount());
-            } catch {}
-        } catch (e) {
-            didFail = true;
-            caughtError = e;
-            errorMessage = (e?.message && DOWNLOAD_ERROR_INDEX[e.message]) ?
-                DOWNLOAD_ERROR_INDEX[e.message].message :
-                (e?.message || String(e));
-        }
-        if (didFail || missingAfterScroll.length) {
-            if (!missingAfterScroll.length) {
-                const collected = state.viewer.type === 'canvas' ?
-                    state.canvas.pages :
-                    state.viewer.type === 'blob' ?
-                    state.blob.pages :
-                    state.ui.images;
-                missingAfterScroll = findMissingPages(collected);
+                session = startDownloadSession();
+                state.ui.activeDownload = session;
+                state.ui.phase = 'collecting';
+                lockPageScroll();
+                lockPageInteraction();
+                scrollToTop();
+                await new Promise(r => setTimeout(r, 300));
+                state.viewer.initialRenderingLogged = false;
+                const renderType = resolveRenderType();
+                if (renderType === 'webp') {
+                    const result = isHorizontalViewerLayout() === 'kr' ? {
+                            images: await collectHorizontalWebpPages(session, () => {}),
+                            switchTo: null
+                        } :
+                        await collectWebpPages(session, () => {});
+                    if (!result.switchTo) {
+                        await retryMissingPages(session, state.ui.images, () => {});
+                        missingAfterScroll = findMissingPages(state.ui.images);
+                    }
+                } else if (renderType === 'canvas') {
+                    await collectCanvasPages(session, () => {});
+                    missingAfterScroll = findMissingPages(state.canvas.pages);
+                } else if (renderType === 'blob') {
+                    if (isHorizontalViewerLayout() === 'jp') {
+                        const collected = await collectHorizontalBlobPages(session, () => {}, new Map(state.blob.pages));
+                        missingAfterScroll = findMissingPages(collected);
+                    } else {
+                        await collectBlobPages(session, () => {});
+                        missingAfterScroll = findMissingPages(state.blob.pages);
+                    }
+                }
+                viewerContainerMatched = VIEWER_CONTAINER_SELECTORS.find(s => document.querySelector(s)) || 'NOT FOUND';
+                try {
+                    totalPageCount = String(getTotalPageCount());
+                } catch {}
+            } catch (e) {
+                didFail = true;
+                caughtError = e;
+                errorMessage = (e?.message && DOWNLOAD_ERROR_INDEX[e.message]) ?
+                    DOWNLOAD_ERROR_INDEX[e.message].message :
+                    (e?.message || String(e));
             }
-        }
-        const missingIndexes = new Set(missingAfterScroll);
-        const missingPageHtml = getIndexedComicCuts()
-            .filter(cut =>
-                missingIndexes.has(Number(cut.dataset.cutIndex))
-            )
-            .map(cut =>
-                `MISSING IMAGE (data-cut-index: ${cut.dataset.cutIndex}): ` +
-                cut.outerHTML
-            );
-        missingPageHtml.forEach(html => {
-            console.warn(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ${html}`);
-        });
-        const promoBlobHtml = [...state.images.promoBlobImages.values()];
-        promoBlobHtml.forEach(html => {
-            console.warn(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ${html}`);
-        });
-        const diagnosticDomains = getDiagnosticDomains();
-        state.diagnostics.active = false;
-        const diagLogs = [...state.diagnostics.consoleHistory];
-        const ts = diagStart.toISOString().replace('T', ' ').slice(0, 23);
-        const lines = [
-            `--- GENERATED ${ts} ---`,
-            '',
-            `SCRIPT_NAME: ${SCRIPT_NAME_DEBUG}`,
-            `SCRIPT_VERSION: v${SCRIPT_VERSION}`,
-            'USER_AGENT: ' + navigator.userAgent,
-            'CHAPTER_URL: ' + location.href,
-            `IMAGE_DOMAINS: ${diagnosticDomains.length ? diagnosticDomains.join(', ') : 'NONE'}`,
-            '',
-            '-- INITIAL DIAGNOSIS --',
-            '',
-            `RENDER_PAGE_SELECTORS: { ${RENDER_PAGE_SELECTORS.find(selector =>
-                document.querySelector(selector)
-            ) || 'NOT FOUND'} }`,
-            `VIEWER_PAGE_SELECTORS: { ${viewerContainerMatched} }`,
-            '',
-            `TOTAL_PAGE_COUNT: { ${totalPageCount} }`,
-            `SERIES_TITLE: { ${getSeriesTitle()} }`,
-            `SERIES_CHAPTER: { ${getSeriesChapter()} }`,
-            `RENDER_TYPE: ${(state.viewer.type || 'NULL').toUpperCase()}`,
-            `SMALL_FILE_SIZE: ${boolStr(localStorage.getItem(STORAGE_KEY_SMALL_FILE_SIZE) === 'true')}`,
-            '',
-            `IS_CHAPTER_PAGE: ${boolStr(isChapterPage())}`,
-            `IS_ALTERNATE_LAYOUT: ${boolStr(isAlternateViewerLayout())}`,
-            `IS_HORIZONTAL_LAYOUT: ${isHorizontalViewerLayout() || 'FALSE'}`,
-            `IS_MOBILE_DEVICE: ${boolStr(IS_MOBILE_DEVICE)}`,
-            `HAS_PURCHASE_MODAL: ${boolStr(hasPurchaseModal())}`,
-            `FOOTER_ELEMTENT_PRESENT: ${boolStr(!!document.querySelector(UI_PAGE_SELECTORS.footer))}`,
-            `REFRESH_KEY_PRESENT: ${boolStr(!!sessionStorage.getItem(STORAGE_KEY_AUTO_REFRESH))}`,
-            `CANVAS_HOOK_ACTIVE: ${boolStr(!!CanvasRenderingContext2D.prototype.__lezhinHooked)}`,
-            `MISSING_INDEXES: ${missingAfterScroll.length ? missingAfterScroll.join(', ') : 'NONE'}`,
-            '',
-            '-- DEVELOPER CONSOLE --',
-            '',
-            ...diagLogs,
-            '',
-            ...(missingPageHtml.length ? [
-                '-- MISSING IMAGE HTML --',
-                '',
-                ...missingPageHtml,
-                ''
-            ] : []),
-            ...(promoBlobHtml.length ? [
-                '-- PROMO BLOBS IMAGE HTML --',
-                '',
-                ...promoBlobHtml,
-                ''
-            ] : []),
-            '-- SUMMARY RESULTS --',
-            '',
-            didFail ?
-            'OVERALL: FAIL' :
-            `OVERALL: ${missingAfterScroll.length === 0 ? 'PASS' : `PARTIAL (MISSING: ${missingAfterScroll.join(', ')})`}`,
-            ...(didFail ? [`ERROR: ${errorMessage}`] : []),
-            ''
-        ];
-        try {
-            const blob = new Blob([lines.join('\n')], {
-                type: 'text/plain'
+            if (didFail || missingAfterScroll.length) {
+                if (!missingAfterScroll.length) {
+                    const collected = state.viewer.type === 'canvas' ?
+                        state.canvas.pages :
+                        state.viewer.type === 'blob' ?
+                        state.blob.pages :
+                        state.ui.images;
+                    missingAfterScroll = findMissingPages(collected);
+                }
+            }
+            const missingIndexes = new Set(missingAfterScroll);
+            const missingPageHtml = getIndexedComicCuts()
+                .filter(cut =>
+                    missingIndexes.has(Number(cut.dataset.cutIndex))
+                )
+                .map(cut =>
+                    `MISSING IMAGE (data-cut-index: ${cut.dataset.cutIndex}): ` +
+                    cut.outerHTML
+                );
+            missingPageHtml.forEach(html => {
+                console.warn(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ${html}`);
             });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'Offline_Lezhin_Debug.log';
-            a.click();
-            setTimeout(() => URL.revokeObjectURL(url), 1000);
-        } catch {}
-        if (didFail) {
-            handleDownloadError(caughtError);
-            diagBtn.textContent = UI_BUTTON_LABELS.DIAG_DEFAULT;
-            diagBtn.disabled = false;
-            mainBtn.textContent = UI_BUTTON_LABELS.DEFAULT;
-            mainBtn.disabled = false;
-        } else {
-            mainBtn.textContent = UI_BUTTON_LABELS.DEFAULT;
-            diagBtn.textContent = UI_BUTTON_LABELS.COMPLETE;
-            sessionStorage.setItem(STORAGE_KEY_AUTO_REFRESH, '1');
-            window.scrollTo({
-                top: 0,
-                behavior: 'smooth'
+            const promoBlobHtml = [...state.images.promoBlobImages.values()];
+            promoBlobHtml.forEach(html => {
+                console.warn(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ${html}`);
             });
-            setTimeout(() => location.reload(), 700);
+            const diagnosticDomains = getDiagnosticDomains();
+            state.diagnostics.active = false;
+            const diagLogs = [...state.diagnostics.consoleHistory];
+            const ts = diagStart.toISOString().replace('T', ' ').slice(0, 23);
+            const lines = [
+                `--- GENERATED ${ts} ---`,
+                '',
+                `SCRIPT_NAME: ${SCRIPT_NAME_DEBUG}`,
+                `SCRIPT_VERSION: v${SCRIPT_VERSION}`,
+                'USER_AGENT: ' + navigator.userAgent,
+                'CHAPTER_URL: ' + location.href,
+                `IMAGE_DOMAINS: ${diagnosticDomains.length ? diagnosticDomains.join(', ') : 'NONE'}`,
+                '',
+                '-- INITIAL DIAGNOSIS --',
+                '',
+                `RENDER_PAGE_SELECTORS: { ${RENDER_PAGE_SELECTORS.find(selector =>
+                    document.querySelector(selector)
+                ) || 'NOT FOUND'} }`,
+                `VIEWER_PAGE_SELECTORS: { ${viewerContainerMatched} }`,
+                '',
+                `TOTAL_PAGE_COUNT: { ${totalPageCount} }`,
+                `SERIES_TITLE: { ${getSeriesTitle()} }`,
+                `SERIES_CHAPTER: { ${getSeriesChapter()} }`,
+                `RENDER_TYPE: ${(state.viewer.type || 'NULL').toUpperCase()}`,
+                `SMALL_FILE_SIZE: ${boolStr(localStorage.getItem(STORAGE_KEY_SMALL_FILE_SIZE) === 'true')}`,
+                '',
+                `IS_CHAPTER_PAGE: ${boolStr(isChapterPage())}`,
+                `IS_ALTERNATE_LAYOUT: ${boolStr(isAlternateViewerLayout())}`,
+                `IS_HORIZONTAL_LAYOUT: ${isHorizontalViewerLayout() || 'FALSE'}`,
+                `IS_MOBILE_DEVICE: ${boolStr(IS_MOBILE_DEVICE)}`,
+                `HAS_PURCHASE_MODAL: ${boolStr(hasPurchaseModal())}`,
+                `FOOTER_ELEMENT_PRESENT: ${boolStr(!!document.querySelector(UI_PAGE_SELECTORS.footer))}`,
+                `REFRESH_KEY_PRESENT: ${boolStr(!!sessionStorage.getItem(STORAGE_KEY_AUTO_REFRESH))}`,
+                `CANVAS_HOOK_ACTIVE: ${boolStr(!!CanvasRenderingContext2D.prototype.__lezhinHooked)}`,
+                `MISSING_INDEXES: ${missingAfterScroll.length ? missingAfterScroll.join(', ') : 'NONE'}`,
+                '',
+                '-- DEVELOPER CONSOLE --',
+                '',
+                ...diagLogs,
+                '',
+                ...(missingPageHtml.length ? [
+                    '-- MISSING IMAGE HTML --',
+                    '',
+                    ...missingPageHtml,
+                    ''
+                ] : []),
+                ...(promoBlobHtml.length ? [
+                    '-- PROMO BLOBS IMAGE HTML --',
+                    '',
+                    ...promoBlobHtml,
+                    ''
+                ] : []),
+                '-- SUMMARY RESULTS --',
+                '',
+                didFail ?
+                'OVERALL: FAIL' :
+                `OVERALL: ${missingAfterScroll.length === 0 ? 'PASS' : `PARTIAL (MISSING: ${missingAfterScroll.join(', ')})`}`,
+                ...(didFail ? [`ERROR: ${errorMessage}`] : []),
+                ''
+            ];
+            try {
+                const blob = new Blob([lines.join('\n')], {
+                    type: 'text/plain'
+                });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'Offline_Lezhin_Debug.log';
+                a.click();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            } catch (error) {
+                throw error;
+            }
+            if (didFail) {
+                handleDownloadError(caughtError);
+                diagBtn.textContent = UI_BUTTON_LABELS.DIAG_DEFAULT;
+                diagBtn.disabled = false;
+                mainBtn.textContent = UI_BUTTON_LABELS.DEFAULT;
+                mainBtn.disabled = false;
+            } else {
+                mainBtn.textContent = UI_BUTTON_LABELS.DEFAULT;
+                diagBtn.textContent = UI_BUTTON_LABELS.COMPLETE;
+                sessionStorage.setItem(STORAGE_KEY_AUTO_REFRESH, '1');
+                window.scrollTo({
+                    top: 0,
+                    behavior: 'smooth'
+                });
+                setTimeout(() => location.reload(), 700);
+                completed = true;
+            }
+        } catch (error) {
+            try {
+                handleDownloadError(error);
+            } catch (reportError) {
+            }
+        } finally {
+            const cleanup = action => {
+                try { action(); } catch (cleanupError) {}
+            };
+            cleanup(() => { if (session) session.cancel(); });
+            state.diagnostics.active = false;
+            state.canvas.enabled = false;
+            state.blob.enabled = false;
+            state.ui.phase = 'idle';
+            state.ui.isDownloading = false;
+            if (state.ui.activeDownload === session) state.ui.activeDownload = null;
+            cleanup(() => { document.body.style.overflow = previousOverflow; });
+            cleanup(() => { document.body.classList.remove('lock-site-ui'); });
+            cleanup(() => hideDimOverlay());
+            cleanup(() => { mainBtn.disabled = false; });
+            cleanup(() => { diagBtn.disabled = false; });
+            cleanup(() => { mainBtn.textContent = UI_BUTTON_LABELS.DEFAULT; });
+            cleanup(() => {
+                diagBtn.textContent = completed ? UI_BUTTON_LABELS.COMPLETE : UI_BUTTON_LABELS.DIAG_DEFAULT;
+            });
         }
-        state.ui.phase = 'idle';
-        state.ui.isDownloading = false;
-        if (state.ui.activeDownload) state.ui.activeDownload = null;
-        unlockPageScroll();
-        unlockPageInteraction();
     }
 
     async function executeDownloadPipeline(btn) {
