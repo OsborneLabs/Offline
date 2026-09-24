@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      2.1.1
+// @version      2.2.0
 // @description  Downloads and saves Lezhin chapter images to a ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
@@ -231,7 +231,13 @@
             pages: new Map()
         },
         images: {
-            loggedPromoImages: new Set()
+            loggedPromoImages: new Set(),
+            promoBlobImages: new Map()
+        },
+        diagnostics: {
+            active: false,
+            requests: new Map(),
+            consoleHistory: []
         },
         ui: {
             isDownloading: false,
@@ -662,6 +668,8 @@
         document.head.appendChild(style);
     }
 
+    recordConsoleHistory();
+
     function init() {
         sessionStorage.removeItem(STORAGE_KEY_AUTO_REFRESH);
         initScriptObservers();
@@ -1049,6 +1057,34 @@
     }
 
     function isPromoImage(image) {
+        function getDetails() {
+            if (!(image instanceof HTMLImageElement)) {
+                return {
+                    position: 'UNKNOWN',
+                    html: null
+                };
+            }
+            for (const selector of RENDER_PAGE_SELECTORS) {
+                const containers = [...document.querySelectorAll(selector)];
+                if (containers.length < 2) continue;
+                const container = image.closest(selector);
+                const position = containers.indexOf(container);
+                if (position !== -1) {
+                    return {
+                        position: String(position + 1),
+                        html: container.outerHTML
+                    };
+                }
+            }
+            const viewer = getViewerContainer();
+            const images = viewer ? [...viewer.querySelectorAll('img')] : [];
+            const position = images.indexOf(image);
+            return {
+                position: position === -1 ? 'UNKNOWN' : String(position + 1),
+                html: image.outerHTML
+            };
+        }
+
         const src =
             typeof image === 'string' ?
             image :
@@ -1078,12 +1114,28 @@
                 );
             const isPromo =
                 urlMatch || classMatch;
+            const {
+                position,
+                html
+            } = getDetails();
+            const promoKey = `${position}:${src}`;
             if (
                 isPromo &&
-                !state.images.loggedPromoImages.has(src)
+                image instanceof HTMLImageElement &&
+                position !== 'UNKNOWN' &&
+                !state.images.loggedPromoImages.has(promoKey)
             ) {
-                state.images.loggedPromoImages.add(src);
-                console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - PROMO: ${src}`);
+                state.images.loggedPromoImages.add(promoKey);
+                if (src.startsWith('blob:')) {
+                    state.images.promoBlobImages.set(
+                        promoKey,
+                        `PROMO BLOB (${position}): ${html}`
+                    );
+                }
+                console.debug(
+                    `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ` +
+                    `PROMO: ${src} (${position})`
+                );
             }
             return isPromo;
         } catch {
@@ -1709,6 +1761,21 @@
         );
     }
 
+    function logCollection(event, {
+        startedAt,
+        ...details
+    } = {}, level = 'debug') {
+        if (startedAt !== undefined) {
+            details.elapsedMs = startedAt === null ? null : Math.round(performance.now() - startedAt);
+        }
+        const message = `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - COLLECTION: ${event}`;
+        if (level === 'warn') {
+            console.warn(message, details);
+        } else {
+            console.debug(message, details);
+        }
+    }
+
     async function retryMissingPages(
         session,
         collectedMap,
@@ -1722,19 +1789,40 @@
         } = {}
     ) {
         let previousMissingKey = null;
+        const started = performance.now();
+        const method = collectedMap === state.canvas.pages ? 'canvas-scroll' :
+            collectedMap === state.ui.images ? 'webp-scroll' : 'page-scroll';
+        let attemptsUsed = 0;
+        let stopReason = 'attempt-limit';
+        logCollection('RETRY START', {
+            method,
+            maxAttempts,
+            scrollDelay,
+            idleWait,
+            nudgeScroll
+        });
         const delayMs = scrollDelay;
         for (
             let attempt = 0; attempt < maxAttempts && !session.cancelled; attempt++
         ) {
             const missing = findMissingPages(collectedMap);
             if (!missing.length) {
+                stopReason = 'complete';
                 break;
             }
             const missingKey = missing.join(', ');
             if (missingKey === previousMissingKey) {
+                stopReason = 'no-progress';
                 break;
             }
             previousMissingKey = missingKey;
+            attemptsUsed++;
+            logCollection('RETRY ATTEMPT', {
+                method,
+                attempt: attemptsUsed,
+                maxAttempts,
+                missing
+            });
             if (beforeAttempt) {
                 await beforeAttempt(missing);
             }
@@ -1742,6 +1830,7 @@
                 if (session.cancelled) {
                     break;
                 }
+                const pageStarted = performance.now();
                 scrollToComicPage(index, {
                     instant: true,
                     allowLastPage: false
@@ -1749,6 +1838,16 @@
                 await new Promise(r =>
                     setTimeout(r, delayMs)
                 );
+                logCollection('PAGE', {
+                    method,
+                    phase: 'retry',
+                    index,
+                    outcome: session.cancelled ? 'cancelled' : collectedMap.has(index) ? 'collected' : 'still-missing',
+                    startedAt: pageStarted,
+                    attempt: attemptsUsed,
+                    maxAttempts,
+                    waitBudgetMs: delayMs
+                });
                 onProgress?.(collectedMap.size, null);
             }
             if (nudgeScroll) {
@@ -1761,7 +1860,8 @@
             if (idleWait) {
                 const isFirstRetry = attempt === 0;
                 const fewMissing = missing.length <= 2;
-                await waitForCanvasIdle(
+                const idleStarted = performance.now();
+                const idleReached = await waitForCanvasIdle(
                     isFirstRetry ?
                     250 :
                     (fewMissing ? 120 : 150),
@@ -1769,9 +1869,23 @@
                     900 :
                     (fewMissing ? 400 : 500)
                 );
+                logCollection('IDLE WAIT', {
+                    method,
+                    attempt: attemptsUsed,
+                    outcome: idleReached ? 'idle' : 'timeout',
+                    startedAt: idleStarted
+                });
             }
         }
         const finalMissing = findMissingPages(collectedMap);
+        logCollection('RETRY END', {
+            method,
+            attemptsUsed,
+            maxAttempts,
+            stopReason: session.cancelled ? 'cancelled' : !finalMissing.length ? 'complete' : stopReason,
+            missing: finalMissing,
+            startedAt: started
+        });
         return finalMissing;
     }
 
@@ -1832,10 +1946,19 @@
             scrollToComicPage(index, {
                 instant: true
             });
-            await waitForImageInjection(
+            const pageStarted = performance.now();
+            const injected = await waitForImageInjection(
                 cut,
                 1500
             );
+            logCollection('PAGE', {
+                method: 'webp-injection',
+                phase: 'initial',
+                index,
+                outcome: session.cancelled ? 'cancelled' : injected ? 'source-available' : 'timeout',
+                startedAt: pageStarted,
+                waitBudgetMs: 1500
+            });
             const liveWrapper =
                 getViewerContainer();
             if (liveWrapper) {
@@ -1893,7 +2016,7 @@
             '[role="slider"][data-max][data-value]'
         );
         if (!wrapper || !sliderBtn || session.cancelled) {
-            console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - UI SLIDER NOT FOUND FOR HORIZONTAL LAYOUT`);
+            console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - UI SLIDER NOT FOUND IN HORIZONTAL LAYOUT`);
             return [];
         }
         const getIndex = () => Number(sliderBtn.getAttribute('data-value'));
@@ -1949,6 +2072,7 @@
             ]);
             safety++;
         }
+        let pageStarted = performance.now();
         while (!session.cancelled) {
             const index = getIndex();
             const img = getActiveImage();
@@ -1959,9 +2083,17 @@
                     onProgress(state.ui.images.size);
                 }
             }
+            logCollection('PAGE', {
+                method: 'webp-horizontal-navigation',
+                phase: 'initial',
+                index,
+                outcome: state.ui.images.has(index) ? 'source-collected' : 'still-missing',
+                startedAt: pageStarted
+            });
             if (index >= total) break;
             const previousIndex = index;
             const previousSrc = img?.src;
+            pageStarted = performance.now();
             navNext?.click();
             await Promise.all([
                 waitForIndexChange(previousIndex),
@@ -2159,11 +2291,22 @@
         await new Promise(r => setTimeout(r, 300));
         for (const cut of cuts) {
             if (session.cancelled) break;
+            const pageStarted = performance.now();
+            const index = Number(cut.dataset.cutIndex);
+            const precollected = state.canvas.pages.has(index);
             scrollToComicPage(
-                Number(cut.dataset.cutIndex),
+                index,
                 'smooth'
             );
             await new Promise(r => setTimeout(r, 300));
+            logCollection('PAGE', {
+                method: 'canvas-scroll',
+                phase: 'initial',
+                index,
+                outcome: session.cancelled ? 'cancelled' : precollected ? 'already-collected' : state.canvas.pages.has(index) ? 'collected' : 'still-missing',
+                startedAt: pageStarted,
+                waitBudgetMs: 300
+            });
             onProgress(state.canvas.pages.size, total);
         }
         const missingInitial = findMissingPages(state.canvas.pages);
@@ -2175,10 +2318,24 @@
         }
         state.canvas.enabled = false;
         let previousMissingCount = Infinity;
+        let cyclesUsed = 0;
+        let cycleStopReason = 'attempt-limit';
         for (let attempt = 0; attempt < 4 && !session.cancelled; attempt++) {
             const missing = findMissingPages(state.canvas.pages);
-            if (!missing.length) break;
-            if (missing.length >= previousMissingCount) break;
+            if (!missing.length) {
+                cycleStopReason = 'complete';
+                break;
+            }
+            if (missing.length >= previousMissingCount) {
+                cycleStopReason = 'no-progress';
+                break;
+            }
+            cyclesUsed++;
+            logCollection('RETRY CYCLE', {
+                method: 'canvas-scroll',
+                cycle: cyclesUsed,
+                maxCycles: 4
+            });
             previousMissingCount = missing.length;
             await retryMissingPages(
                 session,
@@ -2195,6 +2352,14 @@
                 }
             );
         }
+        const remaining = findMissingPages(state.canvas.pages);
+        logCollection('RETRY CYCLES END', {
+            method: 'canvas-scroll',
+            cyclesUsed,
+            maxCycles: 4,
+            stopReason: session.cancelled ? 'cancelled' : !remaining.length ? 'complete' : cycleStopReason,
+            missing: remaining
+        });
         return [...state.canvas.pages.values()]
             .filter(p => p.ops.length)
             .sort((a, b) => a.pageIndex - b.pageIndex);
@@ -2298,8 +2463,7 @@
 
     async function collectBlobPages(
         session,
-        onProgress,
-        expectedCount = null
+        onProgress
     ) {
         function formatPageRanges(pages) {
             if (!pages.length) return '';
@@ -2324,6 +2488,8 @@
             const collected = new Map();
             const layout = getViewerLayoutConfig();
             let lastCount = 0;
+            let pendingObservation = null;
+            const initialStarted = performance.now();
             let lastProgressTs = performance.now();
 
             function getPageContainers() {
@@ -2379,6 +2545,10 @@
                 ) {
                     return;
                 }
+                pendingObservation = {
+                    index: firstMissing,
+                    started: performance.now()
+                };
                 scrollToComicPage(
                     firstMissing, {
                         instant: true,
@@ -2397,21 +2567,36 @@
                     extractHydratedBlobs(
                         containers
                     );
-                blobs.forEach(
-                    ({
+                for (const {
                         index,
                         img
-                    }) => {
-                        if (
-                            !collected.has(index)
-                        ) {
-                            collected.set(
+                    }
+                    of blobs) {
+                    if (!collected.has(index)) {
+                        collected.set(index, img);
+                        if (pendingObservation?.index !== index) {
+                            logCollection('PAGE', {
+                                method: 'blob-scan-scroll',
+                                phase: 'initial',
                                 index,
-                                img
-                            );
+                                outcome: 'observed-available',
+                                startedAt: null,
+                                timingNote: 'No individual scroll start (may be preloaded or loaded alongside another page)'
+                            });
                         }
                     }
-                );
+                }
+                if (pendingObservation) {
+                    logCollection('PAGE', {
+                        method: 'blob-scan-scroll',
+                        phase: 'initial',
+                        index: pendingObservation.index,
+                        outcome: collected.has(pendingObservation.index) ? 'collected' : 'still-missing',
+                        startedAt: pendingObservation.started,
+                        waitBudgetMs: WAIT_AFTER_SCROLL_MS
+                    });
+                    pendingObservation = null;
+                }
                 onProgress?.(collected.size);
                 if (
                     totalContainers > 0 &&
@@ -2429,11 +2614,12 @@
                         lastProgressTs >
                         STALL_TIMEOUT_MS
                     ) {
-                        console.warn(
-                            `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ` +
-                            `BLOB COLLECTION STALLED AT ` +
-                            `${collected.size}/${totalContainers}`
-                        );
+                        logCollection('INITIAL STALLED', {
+                            method: 'blob-scan-scroll',
+                            collected: collected.size,
+                            total: totalContainers,
+                            stopReason: 'no-progress'
+                        }, 'warn');
                         break;
                     }
                 } else {
@@ -2457,6 +2643,22 @@
                     );
                 }
             }
+            if (pendingObservation) {
+                logCollection('PAGE', {
+                    method: 'blob-scan-scroll',
+                    phase: 'initial',
+                    index: pendingObservation.index,
+                    outcome: 'cancelled',
+                    startedAt: pendingObservation.started
+                });
+            }
+            logCollection('INITIAL END', {
+                method: 'blob-scan-scroll',
+                collected: collected.size,
+                stopReason: session.cancelled ? 'cancelled' : collected.size >= getPageContainers().length && collected.size > 0 ? 'complete' : 'no-progress',
+                stallTimeoutMs: STALL_TIMEOUT_MS,
+                startedAt: initialStarted
+            });
             return collected;
         }
         const collected =
@@ -2474,8 +2676,82 @@
                 );
             }
         }
+        const retryStarted = performance.now();
+        let attemptsUsed = 0;
+        let stopReason = 'attempt-limit';
         const BLOB_RETRY_ATTEMPTS = 4;
+        const BLOB_PAGE_HYDRATION_TIMEOUT_MS = 5000;
         let previousMissingKey = null;
+
+        function waitForHydratedBlob(index) {
+            return new Promise(resolve => {
+                const container = getIndexedComicCuts().find(cut =>
+                    Number(cut.dataset.cutIndex) === index
+                );
+                if (!container) {
+                    resolve({
+                        img: null,
+                        outcome: 'container-not-found',
+                        details: 'CONTAINER NOT FOUND'
+                    });
+                    return;
+                }
+                let observedImage = null;
+                let settled = false;
+                const getImage = () => container.querySelector('img');
+                const getDetails = () => {
+                    const img = getImage();
+                    return `IMG: ${img ? 'PRESENT' : 'NOT FOUND'} | ` +
+                        `SRC: ${img?.src || 'NONE'} | ` +
+                        `COMPLETE: ${img?.complete ? 'TRUE' : 'FALSE'} | ` +
+                        `NATURAL_WIDTH: ${img?.naturalWidth || 0}`;
+                };
+                const isHydratedBlob = img =>
+                    img &&
+                    img.src.startsWith('blob:') &&
+                    img.complete &&
+                    img.naturalWidth > 0;
+                const cleanup = () => {
+                    observer.disconnect();
+                    clearTimeout(timeout);
+                };
+                const finish = img => {
+                    if (settled) return;
+                    settled = true;
+                    cleanup();
+                    resolve({
+                        img,
+                        outcome: img ? 'hydrated' : 'timeout',
+                        details: getDetails()
+                    });
+                };
+                const check = () => {
+                    const img = getImage();
+                    if (isHydratedBlob(img)) {
+                        finish(img);
+                        return;
+                    }
+                    if (img && img !== observedImage) {
+                        observedImage = img;
+                        img.addEventListener('load', check, {
+                            once: true
+                        });
+                    }
+                };
+                const observer = new MutationObserver(check);
+                observer.observe(container, {
+                    childList: true,
+                    subtree: true,
+                    attributes: true,
+                    attributeFilter: ['src']
+                });
+                const timeout = setTimeout(
+                    () => finish(null),
+                    BLOB_PAGE_HYDRATION_TIMEOUT_MS
+                );
+                check();
+            });
+        }
         for (
             let attempt = 0; attempt <
             BLOB_RETRY_ATTEMPTS &&
@@ -2490,22 +2766,32 @@
             }
             const missingKey =
                 formatPageRanges(missing);
-            console.debug(
-                `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ` +
-                `RETRYING PAGE POSITIONS: ${missingKey}`
-            );
+            logCollection('RETRY MISSING', {
+                method: 'blob-hydration-scroll',
+                missing
+            });
             if (
                 missingKey ===
                 previousMissingKey
             ) {
-                console.warn(
-                    `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ` +
-                    `BLOB RETRY STALLED. REMAINING PAGE POSITIONS: ${missingKey}`
-                );
+                stopReason = 'no-progress';
+                logCollection('RETRY STALLED', {
+                    method: 'blob-hydration-scroll',
+                    stopReason: 'no-progress',
+                    missing
+                }, 'warn');
                 break;
             }
             previousMissingKey =
                 missingKey;
+            attemptsUsed++;
+            logCollection('RETRY ATTEMPT', {
+                method: 'blob-hydration-scroll',
+                attempt: attemptsUsed,
+                maxAttempts: BLOB_RETRY_ATTEMPTS,
+                waitBudgetMs: BLOB_PAGE_HYDRATION_TIMEOUT_MS,
+                missing
+            });
             for (const index of missing) {
                 if (
                     session.cancelled
@@ -2516,72 +2802,49 @@
                     instant: true,
                     allowLastPage: false
                 });
-                await new Promise(r =>
-                    setTimeout(r, 750)
-                );
-                const containers =
-                    (() => {
-                        for (const sel of RENDER_PAGE_SELECTORS) {
-                            const nodes =
-                                document.querySelectorAll(
-                                    sel
-                                );
-                            if (
-                                nodes.length
-                            ) {
-                                return nodes;
-                            }
-                        }
-                        return [];
-                    })();
-                containers.forEach(
-                    (el, i) => {
-                        const idx = i + 1;
-                        if (
-                            state.blob.pages.has(
-                                idx
-                            )
-                        ) {
-                            return;
-                        }
-                        const img =
-                            el.querySelector(
-                                'img[src^="blob:"]'
-                            );
-                        if (
-                            img &&
-                            img.complete
-                        ) {
-                            state.blob.pages.set(
-                                idx,
-                                img
-                            );
-                            console.debug(
-                                `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ` +
-                                `RECOVERED MISSING BLOB: ${idx}`
-                            );
-                            onProgress?.(
-                                state.blob.pages
-                                .size
-                            );
-                        }
-                    }
-                );
+                const pageStarted = performance.now();
+                const result = await waitForHydratedBlob(index);
+                logCollection('PAGE', {
+                    method: 'blob-hydration-scroll',
+                    phase: 'retry',
+                    index,
+                    outcome: session.cancelled ? 'cancelled' : result.outcome,
+                    startedAt: pageStarted,
+                    attempt: attemptsUsed,
+                    maxAttempts: BLOB_RETRY_ATTEMPTS,
+                    waitBudgetMs: BLOB_PAGE_HYDRATION_TIMEOUT_MS
+                });
+                if (!result.img) {
+                    logCollection('PAGE HYDRATION FAILED', {
+                        method: 'blob-hydration-scroll',
+                        phase: 'retry',
+                        index,
+                        outcome: result.outcome,
+                        details: result.details
+                    }, 'warn');
+                    continue;
+                }
+                state.blob.pages.set(index, result.img);
+                logCollection('RETRY RECOVERED', {
+                    method: 'blob-hydration-scroll',
+                    index
+                });
+                onProgress?.(state.blob.pages.size);
+                await new Promise(r => setTimeout(r, 120));
             }
         }
         const finalMissing =
             findMissingPages(
                 state.blob.pages
             );
-        if (finalMissing.length) {
-            console.warn(
-                `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ` +
-                `BLOB RETRIES EXHAUSTED. MISSING PAGE POSITIONS: ` +
-                formatPageRanges(
-                    finalMissing
-                )
-            );
-        }
+        logCollection('RETRY END', {
+            method: 'blob-hydration-scroll',
+            attemptsUsed,
+            maxAttempts: BLOB_RETRY_ATTEMPTS,
+            stopReason: session.cancelled ? 'cancelled' : !finalMissing.length ? 'complete' : stopReason,
+            missing: finalMissing,
+            startedAt: retryStarted
+        });
         return state.blob.pages;
     }
 
@@ -2715,13 +2978,33 @@
             let img = null;
             const MAX_RETRIES = 4;
             for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+                const pageStarted = performance.now();
                 img = await waitForImage(spreadEl, 3000);
+                logCollection('PAGE', {
+                    method: 'blob-horizontal-hydration',
+                    phase: attempt === 0 ? 'initial' : 'retry',
+                    index: pageNum,
+                    outcome: session.cancelled ? 'cancelled' : img ? 'hydrated' : 'timeout',
+                    startedAt: pageStarted,
+                    attempt: attempt + 1,
+                    maxAttempts: MAX_RETRIES,
+                    waitBudgetMs: 3000
+                });
                 if (img) break;
                 await new Promise(r => setTimeout(r, 250));
                 spreadEl = getActiveSpread();
             }
+            logCollection('PAGE ATTEMPTS END', {
+                method: 'blob-horizontal-hydration',
+                index: pageNum,
+                stopReason: session.cancelled ? 'cancelled' : img ? 'complete' : 'attempt-limit',
+                maxAttempts: MAX_RETRIES
+            });
             if (!img) {
-                console.warn(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - FAILED TO COLLECT PAGE ${pageNum}`);
+                logCollection('PAGE FAILED', {
+                    method: 'blob-horizontal-hydration',
+                    index: pageNum
+                }, 'warn');
                 continue;
             }
             if (!seenSrcs.has(img.src)) {
@@ -2881,6 +3164,8 @@
 
     function getImageData(url) {
         return new Promise((resolve, reject) => {
+            recordDiagnosticRequest('GET', url, '', false);
+
             function fail(type, details = null) {
                 if (details) {
                     console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ${type}`, details);
@@ -2918,6 +3203,7 @@
                         status,
                         response: data
                     } = response;
+                    recordDiagnosticRequest('GET', url, `HTTP/${status || 0}`);
                     if (
                         status >= 200 &&
                         status < 300 &&
@@ -2932,16 +3218,77 @@
                     });
                 },
                 onerror: error => {
+                    recordDiagnosticRequest('GET', url, 'HTTP/0 NETWORK ERROR');
                     fail('NETWORK_ERROR', {
                         url,
                         error
                     });
                 },
                 ontimeout: () => {
+                    recordDiagnosticRequest('GET', url, 'HTTP/0 TIMEOUT');
                     fail('REQUEST_TIMEOUT', url);
                 }
             });
         });
+    }
+
+    function recordConsoleHistory() {
+        function formatMessage(args) {
+            const firstArg = typeof args[0] === 'string' ? args[0] : '';
+            if (!firstArg.includes(SCRIPT_NAME_DEBUG)) return null;
+            let fmt = firstArg;
+            const rest = args.slice(1);
+            fmt = fmt.replace(/%c/g, () => {
+                rest.shift();
+                return '';
+            });
+            const extras = rest.map(arg => {
+                if (typeof arg === 'string') return arg;
+                try {
+                    return JSON.stringify(arg);
+                } catch {
+                    return String(arg);
+                }
+            });
+            const cleaned = [fmt, ...extras].join(' ').trim().replace(
+                new RegExp(`${SCRIPT_NAME_DEBUG} v[\\d.]+ - `, 'g'),
+                ''
+            );
+            const ts = new Date().toISOString().replace('T', ' ').slice(0, 23);
+            return `[${ts}] ${cleaned}`;
+        }
+        if (window.__lezhinConsoleHistoryInstalled) return;
+        window.__lezhinConsoleHistoryInstalled = true;
+        ['log', 'debug', 'warn', 'error'].forEach(level => {
+            const original = console[level].bind(console);
+            console[level] = function(...args) {
+                original(...args);
+                const entry = formatMessage(args);
+                if (!entry) return;
+                state.diagnostics.consoleHistory.push(entry);
+                if (state.diagnostics.consoleHistory.length > 1000) {
+                    state.diagnostics.consoleHistory.shift();
+                }
+            };
+        });
+    }
+
+    function recordDiagnosticRequest(type, url, details = '', log = true) {
+        if (!state.diagnostics.active || !url) return;
+        const key = `${type}|${url}`;
+        const existing = state.diagnostics.requests.get(key);
+        if (existing && !details) return;
+        const request = existing || {
+            type,
+            url
+        };
+        request.details = details;
+        state.diagnostics.requests.set(key, request);
+        if (!log) return;
+        console.debug(
+            `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ${type}: ${url}` +
+            (details ? ` ${details}` : '')
+        );
     }
 
     async function executeDiagnosticPipeline(mainBtn, diagBtn) {
@@ -2951,43 +3298,36 @@
         mainBtn.textContent = UI_BUTTON_LABELS.DIAGNOSING;
         diagBtn.disabled = true;
         diagBtn.textContent = UI_BUTTON_LABELS.DIAGNOSING;
-        const diagLogs = [];
         const diagStart = new Date();
+        state.diagnostics.active = true;
+        state.diagnostics.requests.clear();
+        state.images.loggedPromoImages.clear();
+        state.images.promoBlobImages.clear();
         const boolStr = v => v ? 'TRUE' : 'FALSE';
-        const originals = {};
-        ['log', 'debug', 'warn', 'error'].forEach(level => {
-            originals[level] = console[level].bind(console);
-            console[level] = function(...args) {
-                originals[level](...args);
-                const firstArg = typeof args[0] === 'string' ? args[0] : '';
-                if (!firstArg.includes(SCRIPT_NAME_DEBUG)) return;
-                const ts = new Date().toISOString().replace('T', ' ').slice(0, 23);
-                let fmt = firstArg;
-                const rest = args.slice(1);
-                const styleArgs = [];
-                fmt = fmt.replace(/%c/g, () => {
-                    styleArgs.push(rest.shift());
-                    return '';
-                });
-                const extras = rest.map(a => {
-                    if (typeof a === 'string') return a;
-                    try {
-                        return JSON.stringify(a);
-                    } catch {
-                        return String(a);
-                    }
-                });
-                const full = [fmt, ...extras].join(' ').trim();
-                const cleaned = full.replace(
-                    new RegExp(`${SCRIPT_NAME_DEBUG} v[\\d.]+ - `, 'g'), ''
-                );
-                diagLogs.push(`[${ts}] ${cleaned}`);
-            };
-        });
-        const restoreConsole = () => {
-            ['log', 'debug', 'warn', 'error'].forEach(level => {
-                console[level] = originals[level];
+        const getDiagnosticDomains = () => {
+            const domains = new Set();
+            const entries = [
+                ...performance.getEntriesByType('resource'),
+                ...[...state.diagnostics.requests.values()].map(request => ({
+                    name: request.url
+                })),
+                ...state.diagnostics.consoleHistory.flatMap(line => [...line.matchAll(/\bGET:\s+(https?:\/\/[^\s]+)/g)]
+                    .map(match => ({
+                        name: match[1]
+                    })))
+            ];
+            entries.forEach(entry => {
+                try {
+                    const url = new URL(entry.name, location.href);
+                    if (!['http:', 'https:'].includes(url.protocol)) return;
+                    if (entry.initiatorType !== 'img' &&
+                        !/^image\//i.test(entry.contentType || '') &&
+                        !(/\.(?:avif|bmp|gif|ico|jpe?g|png|svg|webp|apng|jxl)$/i.test(url.pathname) &&
+                            !['script', 'audio', 'video'].includes(entry.initiatorType))) return;
+                    domains.add(url.hostname);
+                } catch {}
             });
+            return [...domains].sort();
         };
         let viewerContainerMatched = 'NOT FOUND';
         let totalPageCount = 'N/A';
@@ -3023,27 +3363,50 @@
                     const collected = await collectHorizontalBlobPages(session, () => {}, new Map(state.blob.pages));
                     missingAfterScroll = findMissingPages(collected);
                 } else {
-                    const layout = getViewerLayoutConfig();
-                    const expectedCount = layout.pageSource === 'cuts' ?
-                        getAllPageIndexes().length :
-                        getTotalPageCount();
-                    await collectBlobPages(session, () => {}, expectedCount);
+                    await collectBlobPages(session, () => {});
                     missingAfterScroll = findMissingPages(state.blob.pages);
                 }
             }
-            restoreConsole();
             viewerContainerMatched = VIEWER_CONTAINER_SELECTORS.find(s => document.querySelector(s)) || 'NOT FOUND';
             try {
                 totalPageCount = String(getTotalPageCount());
             } catch {}
         } catch (e) {
-            restoreConsole();
             didFail = true;
             caughtError = e;
             errorMessage = (e?.message && DOWNLOAD_ERROR_INDEX[e.message]) ?
                 DOWNLOAD_ERROR_INDEX[e.message].message :
                 (e?.message || String(e));
         }
+        if (didFail || missingAfterScroll.length) {
+            if (!missingAfterScroll.length) {
+                const collected = state.viewer.type === 'canvas' ?
+                    state.canvas.pages :
+                    state.viewer.type === 'blob' ?
+                    state.blob.pages :
+                    state.ui.images;
+                missingAfterScroll = findMissingPages(collected);
+            }
+        }
+        const missingIndexes = new Set(missingAfterScroll);
+        const missingPageHtml = getIndexedComicCuts()
+            .filter(cut =>
+                missingIndexes.has(Number(cut.dataset.cutIndex))
+            )
+            .map(cut =>
+                `MISSING IMAGE (data-cut-index: ${cut.dataset.cutIndex}): ` +
+                cut.outerHTML
+            );
+        missingPageHtml.forEach(html => {
+            console.warn(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ${html}`);
+        });
+        const promoBlobHtml = [...state.images.promoBlobImages.values()];
+        promoBlobHtml.forEach(html => {
+            console.warn(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ${html}`);
+        });
+        const diagnosticDomains = getDiagnosticDomains();
+        state.diagnostics.active = false;
+        const diagLogs = [...state.diagnostics.consoleHistory];
         const ts = diagStart.toISOString().replace('T', ' ').slice(0, 23);
         const lines = [
             `--- GENERATED ${ts} ---`,
@@ -3052,36 +3415,53 @@
             `SCRIPT_VERSION: v${SCRIPT_VERSION}`,
             'USER_AGENT: ' + navigator.userAgent,
             'CHAPTER_URL: ' + location.href,
+            `IMAGE_DOMAINS: ${diagnosticDomains.length ? diagnosticDomains.join(', ') : 'NONE'}`,
             '',
             '-- INITIAL DIAGNOSIS --',
             '',
-            `Chapter Page: ${boolStr(isChapterPage())}`,
-            `Purchase Modal: ${boolStr(hasPurchaseModal())}`,
-            `Alternate Layout: ${boolStr(isAlternateViewerLayout())}`,
-            `Horizontal Layout: ${isHorizontalViewerLayout() || 'FALSE'}`,
-            `Mobile Device: ${boolStr(IS_MOBILE_DEVICE)}`,
-            `Render Type: ${(state.viewer.type || 'NULL').toUpperCase()}`,
+            `RENDER_PAGE_SELECTORS: { ${RENDER_PAGE_SELECTORS.find(selector =>
+                document.querySelector(selector)
+            ) || 'NOT FOUND'} }`,
+            `VIEWER_PAGE_SELECTORS: { ${viewerContainerMatched} }`,
             '',
-            `getViewerContainer: { ${viewerContainerMatched} }`,
-            `getTotalPageCount: { ${totalPageCount} }`,
-            `getSeriesTitle: { ${getSeriesTitle()} }`,
-            `getSeriesChapter: { ${getSeriesChapter()} }`,
+            `TOTAL_PAGE_COUNT: { ${totalPageCount} }`,
+            `SERIES_TITLE: { ${getSeriesTitle()} }`,
+            `SERIES_CHAPTER: { ${getSeriesChapter()} }`,
+            `RENDER_TYPE: ${(state.viewer.type || 'NULL').toUpperCase()}`,
+            `SMALL_FILE_SIZE: ${boolStr(localStorage.getItem(STORAGE_KEY_SMALL_FILE_SIZE) === 'true')}`,
             '',
-            `Footer Element Present: ${boolStr(!!document.querySelector(UI_PAGE_SELECTORS.footer))}`,
-            `Missing Indexes on Scroll: ${missingAfterScroll.length ? missingAfterScroll.join(', ') : 'NONE'}`,
-            `Refresh Key Present: ${boolStr(!!sessionStorage.getItem(STORAGE_KEY_AUTO_REFRESH))}`,
-            `Canvas Hook Active: ${boolStr(!!CanvasRenderingContext2D.prototype.__lezhinHooked)}`,
+            `IS_CHAPTER_PAGE: ${boolStr(isChapterPage())}`,
+            `IS_ALTERNATE_LAYOUT: ${boolStr(isAlternateViewerLayout())}`,
+            `IS_HORIZONTAL_LAYOUT: ${isHorizontalViewerLayout() || 'FALSE'}`,
+            `IS_MOBILE_DEVICE: ${boolStr(IS_MOBILE_DEVICE)}`,
+            `HAS_PURCHASE_MODAL: ${boolStr(hasPurchaseModal())}`,
+            `FOOTER_ELEMTENT_PRESENT: ${boolStr(!!document.querySelector(UI_PAGE_SELECTORS.footer))}`,
+            `REFRESH_KEY_PRESENT: ${boolStr(!!sessionStorage.getItem(STORAGE_KEY_AUTO_REFRESH))}`,
+            `CANVAS_HOOK_ACTIVE: ${boolStr(!!CanvasRenderingContext2D.prototype.__lezhinHooked)}`,
+            `MISSING_INDEXES: ${missingAfterScroll.length ? missingAfterScroll.join(', ') : 'NONE'}`,
             '',
             '-- DEVELOPER CONSOLE --',
             '',
             ...diagLogs,
             '',
+            ...(missingPageHtml.length ? [
+                '-- MISSING IMAGE HTML --',
+                '',
+                ...missingPageHtml,
+                ''
+            ] : []),
+            ...(promoBlobHtml.length ? [
+                '-- PROMO BLOBS IMAGE HTML --',
+                '',
+                ...promoBlobHtml,
+                ''
+            ] : []),
             '-- SUMMARY RESULTS --',
             '',
             didFail ?
             'OVERALL: FAIL' :
-            `OVERALL: ${missingAfterScroll.length === 0 ? 'PASS' : `PARTIAL (missing: ${missingAfterScroll.join(', ')})`}`,
-            ...(didFail ? [`Error: ${errorMessage}`] : []),
+            `OVERALL: ${missingAfterScroll.length === 0 ? 'PASS' : `PARTIAL (MISSING: ${missingAfterScroll.join(', ')})`}`,
+            ...(didFail ? [`ERROR: ${errorMessage}`] : []),
             ''
         ];
         try {
@@ -3091,7 +3471,7 @@
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'Offline-Lezhin-Debug.log';
+            a.download = 'Offline_Lezhin_Debug.log';
             a.click();
             setTimeout(() => URL.revokeObjectURL(url), 1000);
         } catch {}
@@ -3168,10 +3548,21 @@
                     const total = cuts.length;
                     for (const cut of cuts) {
                         if (session.cancelled) break;
-                        scrollToComicPage(Number(cut.dataset.cutIndex), {
+                        const pageStarted = performance.now();
+                        const index = Number(cut.dataset.cutIndex);
+                        const precollected = state.canvas.pages.has(index);
+                        scrollToComicPage(index, {
                             instant: true
                         });
                         await new Promise(r => setTimeout(r, 300));
+                        logCollection('PAGE', {
+                            method: 'canvas-scroll',
+                            phase: 'initial',
+                            index,
+                            outcome: session.cancelled ? 'cancelled' : precollected ? 'already-collected' : state.canvas.pages.has(index) ? 'collected' : 'still-missing',
+                            startedAt: pageStarted,
+                            waitBudgetMs: 300
+                        });
                         onCollect(state.canvas.pages.size, total);
                     }
                     state.canvas.enabled = false;
@@ -3200,11 +3591,7 @@
                     completed = true;
                 } else if (result.switchTo === 'blob') {
                     state.blob.enabled = true;
-                    const layout = getViewerLayoutConfig();
-                    const expectedCount = layout.pageSource === 'cuts' ?
-                        getAllPageIndexes().length :
-                        getTotalPageCount();
-                    await collectBlobPages(session, onCollect, expectedCount);
+                    await collectBlobPages(session, onCollect);
                     state.blob.enabled = false;
                     const orderedBlobImages = validateCollectedImages(session, getOrderedBlobPageList(state.blob.pages));
                     state.ui.phase = 'downloading';
@@ -3319,8 +3706,7 @@
                         state.blob.buffer.clear();
                         await collectBlobPages(
                             session,
-                            onCollect,
-                            expectedCount
+                            onCollect
                         );
                     }
                     const orderedImages =
@@ -3457,18 +3843,36 @@
                 const url = typeof resource === 'string' ?
                     resource :
                     resource && resource.url;
+                const method = resource instanceof Request ? resource.method :
+                    (arguments[1]?.method || 'GET');
+                recordDiagnosticRequest(method, url, '', false);
                 try {
                     handleBlock(url, 'fetch');
                 } catch (e) {
                     return Promise.reject(new TypeError('blocked-request'));
                 }
-                return origFetch.apply(this, arguments);
+                return origFetch.apply(this, arguments).then(
+                    response => {
+                        recordDiagnosticRequest(
+                            method,
+                            url,
+                            `HTTP/${response.status} ${response.statusText}`.trim()
+                        );
+                        return response;
+                    },
+                    error => {
+                        recordDiagnosticRequest(method, url, 'HTTP/0 NETWORK ERROR');
+                        throw error;
+                    }
+                );
             };
         }
         const origOpen = XMLHttpRequest.prototype.open;
         const origSend = XMLHttpRequest.prototype.send;
         XMLHttpRequest.prototype.open = function(method, url) {
             const host = getHostname(url);
+            this.__requestMethod = method;
+            this.__requestURL = url;
             if (shouldBlock(host)) {
                 this.__blocked = true;
                 this.__url = url;
@@ -3477,6 +3881,22 @@
             return origOpen.apply(this, arguments);
         };
         XMLHttpRequest.prototype.send = function() {
+            recordDiagnosticRequest(
+                this.__requestMethod || 'GET',
+                this.__requestURL,
+                '',
+                false
+            );
+            if (!this.__diagnosticResponseListenerAttached) {
+                this.__diagnosticResponseListenerAttached = true;
+                this.addEventListener('loadend', () => {
+                    recordDiagnosticRequest(
+                        this.__requestMethod || 'GET',
+                        this.__requestURL,
+                        `HTTP/${this.status || 0} ${this.statusText || ''}`.trim()
+                    );
+                });
+            }
             if (this.__blocked) {
                 logOnce(this.__host, this.__url);
                 this.abort();
