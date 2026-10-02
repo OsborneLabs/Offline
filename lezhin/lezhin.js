@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      2.2.1
-// @description  Downloads and saves Lezhin chapter images to a ZIP file for offline reading
+// @version      3.0.0
+// @description  Downloads and saves Lezhin chapter images to a PDF or ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
 // @homepageURL  https://github.com/OsborneLabs/Offline
@@ -11,26 +11,35 @@
 // @match        https://*.lezhin.com/*
 // @match        https://*.lezhin.es/*
 // @match        https://*.lezhin.jp/*
+// @match        https://*.lezhincomics.com/*
 // @match        https://*.lezhinde.com/*
 // @match        https://*.lezhinfr.com/*
 // @match        https://*.lezhinth.com/*
 // @match        https://*.lezhinx.com/*
+// @match        https://*.beltoon.com/*
 // @match        https://*.beltoon.jp/*
+// @match        https://*.bomtoon.co.kr/*
 // @match        https://*.bomtoon.com/*
 // @match        https://*.bomtoon.tw/*
 // @match        https://*.boomtoon.com/*
+// @match        https://*.delitoon.com/*
+// @match        https://*.delitoon.de/*
+// @match        https://*.delitoonb.de/*
+// @match        https://*.delitoonme.com/*
+// @match        https://*.delitoonx.com/*
 // @run-at       document-start
 // @connect      ccdn.lezhin.com
 // @connect      rcdn.lezhin.com
 // @supportURL   https://github.com/OsborneLabs/Offline/issues
 // @require      https://cdn.jsdelivr.net/npm/fflate@0.8/umd/index.min.js
+// @require      https://cdn.jsdelivr.net/npm/pdf-lib@1.17/dist/pdf-lib.min.js
 // @downloadURL  https://update.greasyfork.org/scripts/568060/Offline%20for%20Lezhin.user.js
 // @updateURL    https://update.greasyfork.org/scripts/568060/Offline%20for%20Lezhin.meta.js
 // @grant        GM_xmlhttpRequest
 // ==/UserScript==
 
 /* jshint esversion: 11 */
-/* global fflate */
+/* global fflate, PDFLib */
 
 (() => {
     'use strict';
@@ -39,7 +48,7 @@
     const SCRIPT_VERSION = typeof GM_info !== 'undefined' ? GM_info.script.version : 'unknown';
     const STORAGE_KEY_AUTO_REFRESH = 'autoRefresh';
     const STORAGE_KEY_SMALL_FILE_SIZE = 'small-file-size';
-    const STORAGE_KEY_DIM_SCREEN = 'dim-screen';
+    const STORAGE_KEY_SAVE_AS_PDF = 'save-as-pdf';
     const UI_TOAST_DURATION_BY_SEVERITY = {
         normal: 10000,
         important: 30000,
@@ -50,7 +59,8 @@
         DEFAULT: 'Download',
         COLLECTING: c => c === 0 ? 'Starting...' : `Collecting: ${c}`,
         DOWNLOADING: (c, t) => `Downloading: ${c}/${t}`,
-        CONVERTING: (c, t) => t && c >= t - 1 ? 'Finishing...' : c === 0 ? 'Converting...' : t ? `Converting: ${c}/${t}` : `Converting: ${c}`,
+        CONVERTING: (c, t) => t && c >= t - 1 ? UI_BUTTON_LABELS.FINISHING : c === 0 ? 'Converting...' : t ? `Converting: ${c}/${t}` : `Converting: ${c}`,
+        FINISHING: 'Finishing...',
         COMPLETE: 'Complete!',
         DIAG_DEFAULT: 'Run Diagnostic',
         DIAGNOSING: 'Diagnosing...',
@@ -132,6 +142,12 @@
         ]
     };
 
+    const RENDER_METHODS = {
+        webp: createWebpMethod(),
+        canvas: createCanvasMethod(),
+        blob: createBlobMethod()
+    };
+
     const DOWNLOAD_ERROR_MAP = {
         BLOB_CAPTURE_FAILED: {
             code: 'blob-capture-failed',
@@ -176,6 +192,11 @@
         NO_IMAGES_COLLECTED: {
             code: 'no-images-collected',
             message: 'Images couldn\'t be collected',
+            severity: 'important'
+        },
+        PDF_CREATION_FAILED: {
+            code: 'pdf-creation-failed',
+            message: 'PDF file couldn\'t be created',
             severity: 'important'
         },
         REQUEST_TIMEOUT: {
@@ -645,6 +666,8 @@
             .download-button, .download-button *, .download-popup, .download-popup *, .lezhin-toast, .lezhin-toast * {
                 user-select: none !important;
             }
+            .download-popup-setting-row.setting-disabled { opacity: 0.45; }
+            .switch input:disabled ~ span { cursor: not-allowed; }
             .lezhin-dim-overlay {
                 position: fixed;
                 inset: 0;
@@ -671,6 +694,7 @@
     recordConsoleHistory();
 
     function init() {
+        localStorage.removeItem('dim-screen');
         sessionStorage.removeItem(STORAGE_KEY_AUTO_REFRESH);
         initScriptObservers();
         disableSiteTelemetry();
@@ -752,8 +776,8 @@
     function initScriptObservers() {
         observeURLMutation();
         initDownloadButtonObserver();
-        initCanvasDrawHook();
-        initBlobBackgroundCollector();
+        RENDER_METHODS.canvas.init();
+        RENDER_METHODS.blob.init();
     }
 
     function initDownloadButtonObserver() {
@@ -825,7 +849,7 @@
         return VIEWER_ALTERNATE_DOMAINS.some(d => host.endsWith(d));
     }
 
-    function isHorizontalViewerLayout() {
+    function getHorizontalViewerType() {
         const {
             horizontalWrapper: jpWrapper
         } = RENDER_PAGE_SELECTORS_HORIZONTAL.jp;
@@ -843,6 +867,10 @@
             return 'kr';
         }
         return false;
+    }
+
+    function isHorizontalViewerLayout() {
+        return getHorizontalViewerType() !== false;
     }
 
     function getViewerLayoutConfig() {
@@ -975,7 +1003,9 @@
     } = {}) {
         for (const selector of RENDER_PAGE_SELECTORS) {
             const cuts = [...document.querySelectorAll(selector)];
-            if (!cuts.length) continue;
+            if (!cuts.length) {
+                continue;
+            }
             if (ensureIndex) {
                 const firstNative = cuts[0]?.dataset.cutIndex;
                 const siteIsZeroBased =
@@ -1056,6 +1086,10 @@
         throwDownloadError('TOTAL_PAGE_COUNT_NOT_FOUND');
     }
 
+    function getCutImage(cut, selector = 'img') {
+        return cut?.matches(selector) ? cut : cut?.querySelector(selector);
+    }
+
     function isPromoImage(image) {
         function getDetails() {
             if (!(image instanceof HTMLImageElement)) {
@@ -1084,7 +1118,6 @@
                 html: image.outerHTML
             };
         }
-
         const src =
             typeof image === 'string' ?
             image :
@@ -1093,7 +1126,7 @@
             return false;
         }
         const PROMO_IMAGE_URL_BLOCKLIST = [
-            'banner', 'notice_contents', 'promotion'
+            'banner', 'notice_contents', 'promotion', 'warning'
         ];
         const PROMO_IMAGE_CLASS_BLOCKLIST = [
             'promotion', 'thumbnail'
@@ -1469,11 +1502,11 @@
                     <div class="download-popup-section-title">Downloads</div>
                     <div class="download-popup-setting-row">
                         <div class="download-popup-setting-text">
-                            <div class="download-popup-setting-label">Dim screen</div>
-                            <div class="download-popup-setting-highlight">Lowers page brightness when downloading</div>
+                            <div class="download-popup-setting-label">Save as PDF</div>
+                            <div class="download-popup-setting-highlight">Downloads chapter images as a .pdf file</div>
                         </div>
                         <label class="switch">
-                            <input type="checkbox" id="toggle-dim-screen">
+                            <input type="checkbox" id="toggle-pdf">
                             <span class="switch-track"></span>
                             <span class="switch-thumb"></span>
                         </label>
@@ -1481,7 +1514,7 @@
                     <div class="download-popup-setting-row">
                         <div class="download-popup-setting-text">
                             <div class="download-popup-setting-label">Small image size</div>
-                            <div class="download-popup-setting-highlight">Downloads images as .webp: ~25% smaller</div>
+                            <div class="download-popup-setting-highlight">Downloads chapter images as .webp</div>
                         </div>
                         <label class="switch">
                             <input type="checkbox" id="toggle-small-file-size">
@@ -1494,7 +1527,7 @@
                 <div class="download-popup-section">
                     <div class="download-popup-section-title">Troubleshooting</div>
                     <div class="download-popup-setting-label">Run a diagnostic</div>
-                    <div class="download-popup-setting-highlight">Simulates a chapter download and exports a debug log as a .log file</div>
+                    <div class="download-popup-setting-highlight">Simulates a chapter download & exports a debug log as a .log file</div>
                     <button class="diagnostic-button" id="button-run-diagnostic">${UI_BUTTON_LABELS.DIAG_DEFAULT}</button>
                 </div>
             </div>
@@ -1506,12 +1539,20 @@
         smallFileSizeToggle.addEventListener('change', () => {
             localStorage.setItem(STORAGE_KEY_SMALL_FILE_SIZE, String(smallFileSizeToggle.checked));
         });
-        const savedDimScreen = isDimScreenEnabled();
-        const dimScreenToggle = popup.querySelector('#toggle-dim-screen');
-        dimScreenToggle.checked = savedDimScreen;
-        dimScreenToggle.addEventListener('change', () => {
-            localStorage.setItem(STORAGE_KEY_DIM_SCREEN, String(dimScreenToggle.checked));
+        const pdfToggle = popup.querySelector('#toggle-pdf');
+        pdfToggle.checked = localStorage.getItem(STORAGE_KEY_SAVE_AS_PDF) === 'true';
+        const syncPDFOptions = () => {
+            smallFileSizeToggle.disabled = pdfToggle.checked;
+            smallFileSizeToggle.checked = !pdfToggle.checked &&
+                localStorage.getItem(STORAGE_KEY_SMALL_FILE_SIZE) === 'true';
+            smallFileSizeToggle.closest('.download-popup-setting-row')
+                .classList.toggle('setting-disabled', pdfToggle.checked);
+        };
+        pdfToggle.addEventListener('change', () => {
+            localStorage.setItem(STORAGE_KEY_SAVE_AS_PDF, String(pdfToggle.checked));
+            syncPDFOptions();
         });
+        syncPDFOptions();
         const diagnosticButton = popup.querySelector('#button-run-diagnostic');
         diagnosticButton.addEventListener('click', () => {
             hidePopup();
@@ -1572,12 +1613,7 @@
         document.body.appendChild(overlay);
     }
 
-    function isDimScreenEnabled() {
-        return localStorage.getItem(STORAGE_KEY_DIM_SCREEN) !== 'false';
-    }
-
     function showDimOverlay() {
-        if (!isDimScreenEnabled()) return;
         const overlay = document.querySelector('.lezhin-dim-overlay');
         if (overlay) overlay.classList.add('visible');
     }
@@ -1638,7 +1674,7 @@
         function getPromoCount() {
             return getIndexedComicCuts()
                 .filter(cut => {
-                    const img = cut.querySelector('img');
+                    const img = getCutImage(cut);
                     return isPromoImage(img);
                 })
                 .length;
@@ -1653,7 +1689,7 @@
         const layout = getViewerLayoutConfig();
         const isHorizontalJpBlob =
             renderType === 'blob' &&
-            isHorizontalViewerLayout() === 'jp';
+            getHorizontalViewerType() === 'jp';
         const isDeterministic =
             renderType === 'blob' &&
             (layout.pageSource === 'cuts' || isHorizontalJpBlob);
@@ -1741,7 +1777,7 @@
         function getExpectedComicIndexes() {
             return getIndexedComicCuts()
                 .filter(cut => {
-                    const img = cut.querySelector('img');
+                    const img = getCutImage(cut);
                     return !isPromoImage(img);
                 })
                 .map(cut =>
@@ -1861,7 +1897,7 @@
                 const isFirstRetry = attempt === 0;
                 const fewMissing = missing.length <= 2;
                 const idleStarted = performance.now();
-                const idleReached = await waitForCanvasIdle(
+                const idleReached = await RENDER_METHODS.canvas.waitForIdle(
                     isFirstRetry ?
                     250 :
                     (fewMissing ? 120 : 150),
@@ -1889,701 +1925,902 @@
         return finalMissing;
     }
 
-    async function collectWebpPages(session, onProgress) {
-        const wrapper = getViewerContainer();
-        if (!wrapper || session.cancelled) {
+    async function collectChapterImages(session, renderType, onProgress) {
+        function getCollectionMethod(renderType, horizontalType = getHorizontalViewerType()) {
+            const method = RENDER_METHODS[renderType];
+            return method ? method.horizontal[horizontalType] || method.normal : null;
+        }
+        const visited = new Set();
+        while (!visited.has(renderType)) {
+            if (session.cancelled) throwDownloadError('DOWNLOAD_ABORTED');
+            visited.add(renderType);
+            const collect = getCollectionMethod(renderType);
+            if (!collect) throwDownloadError('NO_IMAGES_COLLECTED');
+            const result = await collect(session, onProgress);
+            if (session.cancelled) throwDownloadError('DOWNLOAD_ABORTED');
+            if (renderType === 'webp' && result.switchTo) {
+                renderType = result.switchTo;
+                setRenderType(renderType);
+                continue;
+            }
+            if (renderType === 'webp') {
+                await retryMissingPages(session, state.ui.images, onProgress);
+                if (session.cancelled) throwDownloadError('DOWNLOAD_ABORTED');
+                return {
+                    renderType,
+                    images: RENDER_METHODS.webp.orderedPages()
+                };
+            }
             return {
-                images: [],
+                renderType,
+                images: result
+            };
+        }
+        throwDownloadError('NO_IMAGES_COLLECTED');
+    }
+
+    function createWebpMethod() {
+        async function collectKrWebpImages(session, onProgress) {
+            return {
+                images: await collectHorizontalWebpPages(session, onProgress),
                 switchTo: null
             };
         }
-        state.ui.images.clear();
-        const special = getViewerLayoutConfig();
-        const cutsToUse = special.enabled ?
-            special.safeCuts :
-            getIndexedComicCuts();
-        const stableCuts = [...cutsToUse];
-
-        function waitForImageInjection(
-            cut,
-            timeout = 1500
-        ) {
-            return new Promise(resolve => {
-                const start = performance.now();
-
-                function check() {
-                    const img = cut.querySelector('img');
-                    if (
-                        img &&
-                        img.src &&
-                        !img.src.startsWith('blob:')
-                    ) {
-                        return resolve(true);
-                    }
-                    if (
-                        performance.now() - start >
-                        timeout
-                    ) {
-                        return resolve(false);
-                    }
-                    requestAnimationFrame(check);
-                }
-                check();
-            });
-        }
-        for (const cut of stableCuts) {
-            if (
-                session.cancelled ||
-                state.ui.phase !== 'collecting'
-            ) {
-                break;
+        async function collectWebpPages(session, onProgress) {
+            const wrapper = getViewerContainer();
+            if (!wrapper || session.cancelled) {
+                return {
+                    images: [],
+                    switchTo: null
+                };
             }
-            const index =
-                Number(cut.dataset.cutIndex);
-            if (!Number.isFinite(index)) {
-                continue;
-            }
-            scrollToComicPage(index, {
-                instant: true
-            });
-            const pageStarted = performance.now();
-            const injected = await waitForImageInjection(
+            state.ui.images.clear();
+            const special = getViewerLayoutConfig();
+            const cutsToUse = special.enabled ?
+                special.safeCuts :
+                getIndexedComicCuts();
+            const stableCuts = [...cutsToUse];
+
+            function waitForImageInjection(
                 cut,
-                1500
-            );
-            logCollection('PAGE', {
-                method: 'webp-injection',
-                phase: 'initial',
-                index,
-                outcome: session.cancelled ? 'cancelled' : injected ? 'source-available' : 'timeout',
-                startedAt: pageStarted,
-                waitBudgetMs: 1500
-            });
-            const liveWrapper =
-                getViewerContainer();
-            if (liveWrapper) {
-                if (
-                    liveWrapper.querySelector(
-                        'canvas'
-                    )
-                ) {
-                    setRenderType('canvas');
-                    console.log(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - RENDER METHOD OVERRIDE: WEBP → %cCANVAS`, 'font-weight:bold;');
-                    return {
-                        images: null,
-                        switchTo: 'canvas'
-                    };
-                }
-                if (
-                    liveWrapper.querySelector("img[src^='blob:']")
-                ) {
-                    setRenderType('blob');
-                    console.log(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - RENDER METHOD OVERRIDE: WEBP → %cBLOB`, 'font-weight:bold;');
-                    return {
-                        images: null,
-                        switchTo: 'blob'
-                    };
-                }
-            }
-            const img = [...cut.querySelectorAll('img')]
-                .find(i =>
-                    i.src &&
-                    !i.src.startsWith('blob:')
-                );
-            if (
-                img &&
-                !state.ui.images.has(index)
+                timeout = 1500
             ) {
-                state.ui.images.set(
-                    index,
-                    img.src
-                );
-                onProgress(
-                    state.ui.images.size
-                );
-            }
-        }
-        return {
-            images: session.cancelled ? [] : getOrderedWebpPageList(),
-            switchTo: null
-        };
-    }
+                return new Promise(resolve => {
+                    const start = performance.now();
 
-    async function collectHorizontalWebpPages(session, onProgress) {
-        state.ui.images.clear();
-        const wrapper = document.querySelector(RENDER_PAGE_SELECTORS_HORIZONTAL.kr.horizontalWrapper);
-        const sliderBtn = document.querySelector(
-            '[role="slider"][data-max][data-value]'
-        );
-        if (!wrapper || !sliderBtn || session.cancelled) {
-            console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - UI SLIDER NOT FOUND IN HORIZONTAL LAYOUT`);
-            return [];
-        }
-        const getIndex = () => Number(sliderBtn.getAttribute('data-value'));
-        const total = Number(sliderBtn.getAttribute('data-max'));
-        const navPrev = wrapper.querySelector('button[class*="nav--left"]');
-        const navNext = wrapper.querySelector('button[class*="nav--right"]');
-        const getActiveImage = () => {
-            const activeCut = wrapper.querySelector('[class*="cut--active"]');
-            return activeCut?.querySelector('img') || null;
-        };
-        const waitForIndexChange = (previousIndex, timeout = 3000) => {
-            return new Promise(resolve => {
-                const start = Date.now();
-                const tick = () => {
-                    if (session.cancelled) return resolve(false);
-                    const current = getIndex();
-                    if (current !== previousIndex) {
-                        return resolve(true);
+                    function check() {
+                        const img = getCutImage(cut);
+                        if (
+                            img &&
+                            img.src &&
+                            !img.src.startsWith('blob:')
+                        ) {
+                            return resolve(true);
+                        }
+                        if (
+                            performance.now() - start >
+                            timeout
+                        ) {
+                            return resolve(false);
+                        }
+                        requestAnimationFrame(check);
                     }
-                    if (Date.now() - start > timeout) {
-                        return resolve(false);
+                    check();
+                });
+            }
+            for (const cut of stableCuts) {
+                if (
+                    session.cancelled ||
+                    state.ui.phase !== 'collecting'
+                ) {
+                    break;
+                }
+                const index =
+                    Number(cut.dataset.cutIndex);
+                if (!Number.isFinite(index)) {
+                    continue;
+                }
+                scrollToComicPage(index, {
+                    instant: true
+                });
+                const pageStarted = performance.now();
+                const injected = await waitForImageInjection(
+                    cut,
+                    1500
+                );
+                logCollection('PAGE', {
+                    method: 'webp-injection',
+                    phase: 'initial',
+                    index,
+                    outcome: session.cancelled ? 'cancelled' : injected ? 'source-available' : 'timeout',
+                    startedAt: pageStarted,
+                    waitBudgetMs: 1500
+                });
+                const liveWrapper =
+                    getViewerContainer();
+                if (liveWrapper) {
+                    if (
+                        liveWrapper.querySelector(
+                            'canvas'
+                        )
+                    ) {
+                        setRenderType('canvas');
+                        console.log(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - RENDER METHOD OVERRIDE: WEBP -> %cCANVAS`, 'font-weight:bold;');
+                        return {
+                            images: null,
+                            switchTo: 'canvas'
+                        };
                     }
-                    requestAnimationFrame(tick);
-                };
-                tick();
-            });
-        };
-        const waitForImageChange = (previousSrc, timeout = 3000) => {
-            return new Promise(resolve => {
-                const start = Date.now();
-                const tick = () => {
-                    if (session.cancelled) return resolve(false);
-                    const img = getActiveImage();
-                    if (img && img.src && img.src !== previousSrc) {
-                        return resolve(true);
+                    if (
+                        liveWrapper.querySelector("img[src^='blob:']")
+                    ) {
+                        setRenderType('blob');
+                        console.log(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - RENDER METHOD OVERRIDE: WEBP -> %cBLOB`, 'font-weight:bold;');
+                        return {
+                            images: null,
+                            switchTo: 'blob'
+                        };
                     }
-                    if (Date.now() - start > timeout) {
-                        return resolve(false);
-                    }
-                    requestAnimationFrame(tick);
-                };
-                tick();
-            });
-        };
-        let safety = 0;
-        while (getIndex() > 1 && safety < 30 && !session.cancelled) {
-            const prevIndex = getIndex();
-            const prevSrc = getActiveImage()?.src;
-            navPrev?.click();
-            await Promise.all([
-                waitForIndexChange(prevIndex),
-                waitForImageChange(prevSrc)
-            ]);
-            safety++;
-        }
-        let pageStarted = performance.now();
-        while (!session.cancelled) {
-            const index = getIndex();
-            const img = getActiveImage();
-            console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - CURRENT INDEX:`, index);
-            if (img && img.src && !state.ui.images.has(index)) {
-                if (!isPromoImage(img)) {
-                    state.ui.images.set(index, img.src);
-                    onProgress(state.ui.images.size);
+                }
+                const img = [...cut.querySelectorAll('img')]
+                    .find(i =>
+                        i.src &&
+                        !i.src.startsWith('blob:')
+                    );
+                if (
+                    img &&
+                    !state.ui.images.has(index)
+                ) {
+                    state.ui.images.set(
+                        index,
+                        img.src
+                    );
+                    onProgress(
+                        state.ui.images.size
+                    );
                 }
             }
-            logCollection('PAGE', {
-                method: 'webp-horizontal-navigation',
-                phase: 'initial',
-                index,
-                outcome: state.ui.images.has(index) ? 'source-collected' : 'still-missing',
-                startedAt: pageStarted
-            });
-            if (index >= total) break;
-            const previousIndex = index;
-            const previousSrc = img?.src;
-            pageStarted = performance.now();
-            navNext?.click();
-            await Promise.all([
-                waitForIndexChange(previousIndex),
-                waitForImageChange(previousSrc)
-            ]);
+            return {
+                images: session.cancelled ? [] : getOrderedWebpPageList(),
+                switchTo: null
+            };
         }
-        console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - TOTAL COLLECTED:`, state.ui.images.size);
-        return session.cancelled ? [] : getOrderedWebpPageList();
-    }
 
-    function getOrderedWebpPageList() {
-        return [...state.ui.images.entries()]
-            .sort(([a], [b]) => a - b)
-            .map(([, url]) => url);
-    }
-
-    async function convertWebpPagesToJpeg(session, urls, onProgress) {
-        const files = {};
-        const total = urls.length;
-        let completed = 0;
-        onProgress(0, total);
-        const workerCount = getOptimalWorkerCount();
-        const CAN_USE_OFFSCREEN =
-            typeof OffscreenCanvas !== 'undefined' &&
-            OffscreenCanvas.prototype.convertToBlob &&
-            typeof createImageBitmap === 'function';
-        const idleYield = () => new Promise(r => requestAnimationFrame(r));
-        async function convertWebpToJpeg(webpBytes, quality = 0.92) {
-            if (CAN_USE_OFFSCREEN) {
-                const blob = new Blob([webpBytes], {
-                    type: 'image/webp'
-                });
-                const bitmap = await createImageBitmap(blob);
-                const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-                const ctx = canvas.getContext('2d', {
-                    alpha: false
-                });
-                ctx.drawImage(bitmap, 0, 0);
-                const jpegBlob = await canvas.convertToBlob({
-                    type: 'image/jpeg',
-                    quality
-                });
-                return new Uint8Array(await jpegBlob.arrayBuffer());
+        async function collectHorizontalWebpPages(session, onProgress) {
+            state.ui.images.clear();
+            const wrapper = document.querySelector(RENDER_PAGE_SELECTORS_HORIZONTAL.kr.horizontalWrapper);
+            const sliderBtn = document.querySelector(
+                '[role="slider"][data-max][data-value]'
+            );
+            if (!wrapper || !sliderBtn || session.cancelled) {
+                console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - UI SLIDER MISSING IN HORIZONTAL LAYOUT`);
+                return [];
             }
-            return new Promise((resolve, reject) => {
-                const blob = new Blob([webpBytes], {
-                    type: 'image/webp'
+            const getIndex = () => Number(sliderBtn.getAttribute('data-value'));
+            const total = Number(sliderBtn.getAttribute('data-max'));
+            const navPrev = wrapper.querySelector('button[class*="nav--left"]');
+            const navNext = wrapper.querySelector('button[class*="nav--right"]');
+            const getActiveImage = () => {
+                const activeCut = wrapper.querySelector('[class*="cut--active"]');
+                return activeCut?.querySelector('img') || null;
+            };
+            const waitForIndexChange = (previousIndex, timeout = 3000) => {
+                return new Promise(resolve => {
+                    const start = Date.now();
+                    const tick = () => {
+                        if (session.cancelled) return resolve(false);
+                        const current = getIndex();
+                        if (current !== previousIndex) {
+                            return resolve(true);
+                        }
+                        if (Date.now() - start > timeout) {
+                            return resolve(false);
+                        }
+                        requestAnimationFrame(tick);
+                    };
+                    tick();
                 });
-                const img = new Image();
-                const url = URL.createObjectURL(blob);
-                img.onload = () => {
-                    URL.revokeObjectURL(url);
-                    const canvas = document.createElement('canvas');
-                    canvas.width = img.naturalWidth;
-                    canvas.height = img.naturalHeight;
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0);
-                    canvas.toBlob(async jpegBlob => {
-                        if (!jpegBlob) {
-                            return reject(
+            };
+            const waitForImageChange = (previousSrc, timeout = 3000) => {
+                return new Promise(resolve => {
+                    const start = Date.now();
+                    const tick = () => {
+                        if (session.cancelled) return resolve(false);
+                        const img = getActiveImage();
+                        if (img && img.src && img.src !== previousSrc) {
+                            return resolve(true);
+                        }
+                        if (Date.now() - start > timeout) {
+                            return resolve(false);
+                        }
+                        requestAnimationFrame(tick);
+                    };
+                    tick();
+                });
+            };
+            let safety = 0;
+            while (getIndex() > 1 && safety < 30 && !session.cancelled) {
+                const prevIndex = getIndex();
+                const prevSrc = getActiveImage()?.src;
+                navPrev?.click();
+                await Promise.all([
+                    waitForIndexChange(prevIndex),
+                    waitForImageChange(prevSrc)
+                ]);
+                safety++;
+            }
+            let pageStarted = performance.now();
+            while (!session.cancelled) {
+                const index = getIndex();
+                const img = getActiveImage();
+                console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - CURRENT INDEX:`, index);
+                if (img && img.src && !state.ui.images.has(index)) {
+                    if (!isPromoImage(img)) {
+                        state.ui.images.set(index, img.src);
+                        onProgress(state.ui.images.size);
+                    }
+                }
+                logCollection('PAGE', {
+                    method: 'webp-horizontal-navigation',
+                    phase: 'initial',
+                    index,
+                    outcome: state.ui.images.has(index) ? 'source-collected' : 'still-missing',
+                    startedAt: pageStarted
+                });
+                if (index >= total) break;
+                const previousIndex = index;
+                const previousSrc = img?.src;
+                pageStarted = performance.now();
+                navNext?.click();
+                await Promise.all([
+                    waitForIndexChange(previousIndex),
+                    waitForImageChange(previousSrc)
+                ]);
+            }
+            console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - TOTAL COLLECTED:`, state.ui.images.size);
+            return session.cancelled ? [] : getOrderedWebpPageList();
+        }
+
+        function getOrderedWebpPageList() {
+            return [...state.ui.images.entries()]
+                .sort(([a], [b]) => a - b)
+                .map(([, url]) => url);
+        }
+
+        async function buildWebpImageFiles(session, images, onProgress, useSmallFileSize) {
+            async function convertWebpPagesToJpeg(session, urls, onProgress) {
+                const files = {};
+                const total = urls.length;
+                let completed = 0;
+                onProgress(0, total);
+                const workerCount = getOptimalWorkerCount();
+                const CAN_USE_OFFSCREEN =
+                    typeof OffscreenCanvas !== 'undefined' &&
+                    OffscreenCanvas.prototype.convertToBlob &&
+                    typeof createImageBitmap === 'function';
+                const idleYield = () => new Promise(r => requestAnimationFrame(r));
+                async function convertWebpToJpeg(webpBytes, quality = 0.92) {
+                    if (CAN_USE_OFFSCREEN) {
+                        const blob = new Blob([webpBytes], {
+                            type: 'image/webp'
+                        });
+                        const bitmap = await createImageBitmap(blob);
+                        const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+                        const ctx = canvas.getContext('2d', {
+                            alpha: false
+                        });
+                        ctx.fillStyle = '#FFF';
+                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        ctx.drawImage(bitmap, 0, 0);
+                        bitmap.close();
+                        const jpegBlob = await canvas.convertToBlob({
+                            type: 'image/jpeg',
+                            quality
+                        });
+                        return new Uint8Array(await jpegBlob.arrayBuffer());
+                    }
+                    return new Promise((resolve, reject) => {
+                        const blob = new Blob([webpBytes], {
+                            type: 'image/webp'
+                        });
+                        const img = new Image();
+                        const url = URL.createObjectURL(blob);
+                        img.onload = () => {
+                            URL.revokeObjectURL(url);
+                            const canvas = document.createElement('canvas');
+                            canvas.width = img.naturalWidth;
+                            canvas.height = img.naturalHeight;
+                            const ctx = canvas.getContext('2d');
+                            ctx.fillStyle = '#FFF';
+                            ctx.fillRect(0, 0, canvas.width, canvas.height);
+                            ctx.drawImage(img, 0, 0);
+                            canvas.toBlob(async jpegBlob => {
+                                if (!jpegBlob) {
+                                    return reject(
+                                        new Error(
+                                            DOWNLOAD_ERROR_MAP.JPEG_CONVERSION_FAILED.code
+                                        )
+                                    );
+                                }
+                                resolve(
+                                    new Uint8Array(
+                                        await jpegBlob.arrayBuffer()
+                                    )
+                                );
+                            }, 'image/jpeg', quality);
+                        };
+                        img.onerror = () => {
+                            URL.revokeObjectURL(url);
+                            reject(
                                 new Error(
                                     DOWNLOAD_ERROR_MAP.JPEG_CONVERSION_FAILED.code
                                 )
                             );
-                        }
-                        resolve(
-                            new Uint8Array(
-                                await jpegBlob.arrayBuffer()
-                            )
-                        );
-                    }, 'image/jpeg', quality);
-                };
-                img.onerror = () => {
-                    URL.revokeObjectURL(url);
-                    reject(
-                        new Error(
-                            DOWNLOAD_ERROR_MAP.JPEG_CONVERSION_FAILED.code
-                        )
-                    );
-                };
-                img.src = url;
-            });
-        }
-        const jobs = urls.map((url, index) => ({
-            url,
-            index
-        }));
-        const results = await taskQueue(workerCount, jobs, async ({
-            url,
-            index
-        }) => {
-            if (session.cancelled) return null;
-            const webp = await getImageData(url);
-            if (session.cancelled) return null;
-            const jpeg = await convertWebpToJpeg(webp).catch(() => {
-                throwDownloadError('JPEG_CONVERSION_FAILED');
-            });
-            if (session.cancelled) return null;
-            completed++;
-            onProgress(completed, total);
-            if (completed % 2 === 0) await idleYield();
-            return {
-                name: generateImageFileName(index + 1, total, 'jpg'),
-                data: jpeg
-            };
-        });
-        for (const r of results) {
-            if (r) files[r.name] = r.data;
-        }
-        return files;
-    }
-
-    function initCanvasDrawHook() {
-        if (CanvasRenderingContext2D.prototype.__lezhinHooked) return;
-        CanvasRenderingContext2D.prototype.__lezhinHooked = true;
-        const originalDrawImage = CanvasRenderingContext2D.prototype.drawImage;
-        CanvasRenderingContext2D.prototype.drawImage = function(img, ...args) {
-            originalDrawImage.apply(this, [img, ...args]);
-            state.canvas.lastDrawTs = performance.now();
-            if (state.canvas.idleTimer) {
-                clearTimeout(state.canvas.idleTimer);
-            }
-            state.canvas.idleTimer = setTimeout(() => {
-                const resolver = state.canvas.idleResolver;
-                state.canvas.idleResolver = null;
-                if (resolver) resolver(true);
-            }, state.canvas.idleWaitMs || 700);
-            if (!img?.src || isPromoImage(img)) return;
-            const op = getCanvasImageData(img, args);
-            if (!op) return;
-            const pageIndex = getVisiblePageIndex(this.canvas);
-            if (pageIndex == null) return;
-            const store = state.canvas.enabled ?
-                state.canvas.pages :
-                state.canvas.buffer;
-            if (!store.has(pageIndex)) {
-                store.set(pageIndex, {
-                    pageIndex,
-                    url: img.src,
-                    width: this.canvas.width,
-                    height: this.canvas.height,
-                    ops: []
+                        };
+                        img.src = url;
+                    });
+                }
+                const jobs = urls.map((url, index) => ({
+                    url,
+                    index
+                }));
+                const results = await taskQueue(workerCount, jobs, async ({
+                    url,
+                    index
+                }) => {
+                    if (session.cancelled) return null;
+                    const webp = await getImageData(url);
+                    if (session.cancelled) return null;
+                    const jpeg = await convertWebpToJpeg(webp).catch(() => {
+                        throwDownloadError('JPEG_CONVERSION_FAILED');
+                    });
+                    if (session.cancelled) return null;
+                    completed++;
+                    onProgress(completed, total);
+                    if (completed % 2 === 0) await idleYield();
+                    return {
+                        name: generateImageFileName(index + 1, total, 'jpg'),
+                        data: jpeg
+                    };
                 });
+                for (const r of results) {
+                    if (r) files[r.name] = r.data;
+                }
+                return files;
             }
-            store.get(pageIndex).ops.push(op);
+
+            if (!useSmallFileSize) return convertWebpPagesToJpeg(session, images, onProgress);
+            const files = {};
+            const total = images.length;
+            let completedWebp = 0;
+            onProgress(0, total);
+            const workerCount = getOptimalWorkerCount();
+            const jobs = images.map((url, index) => ({
+                url,
+                index
+            }));
+            const results = await taskQueue(workerCount, jobs, async ({
+                url,
+                index
+            }) => {
+                if (session.cancelled) return null;
+                const data = await getImageData(url);
+                if (session.cancelled) return null;
+                completedWebp++;
+                onProgress(completedWebp, total);
+                return {
+                    name: generateImageFileName(index + 1, total, 'webp'),
+                    data
+                };
+            });
+            for (const r of results) {
+                if (r) files[r.name] = r.data;
+            }
+            return files;
+        }
+        return {
+            normal: collectWebpPages,
+            horizontal: {
+                kr: collectKrWebpImages
+            },
+            orderedPages: getOrderedWebpPageList,
+            buildFiles: buildWebpImageFiles
         };
     }
 
-    function getCanvasImageData(img, a) {
-        switch (a.length) {
-            case 2:
-                return {
-                    sx: 0, sy: 0, sw: img.width, sh: img.height, dx: a[0], dy: a[1], dw: img.width, dh: img.height
-                };
-            case 4:
-                return {
-                    sx: 0, sy: 0, sw: img.width, sh: img.height, dx: a[0], dy: a[1], dw: a[2], dh: a[3]
-                };
-            case 8:
-                return {
-                    sx: a[0], sy: a[1], sw: a[2], sh: a[3], dx: a[4], dy: a[5], dw: a[6], dh: a[7]
-                };
-            default:
-                return null;
-        }
-    }
-
-    async function waitForCanvasIdle(ms = 700, timeout = 6000) {
-        state.canvas.idleWaitMs = ms;
-        if (!state.canvas.lastDrawTs) {
-            return true;
-        }
-        return new Promise(resolve => {
-            const timeoutId = setTimeout(() => {
-                state.canvas.idleResolver = null;
-                resolve(false);
-            }, timeout);
-            state.canvas.idleResolver = () => {
-                clearTimeout(timeoutId);
-                resolve(true);
+    function createCanvasMethod() {
+        function initCanvasDrawHook() {
+            function getCanvasImageData(img, a) {
+                switch (a.length) {
+                    case 2:
+                        return {
+                            sx: 0, sy: 0, sw: img.width, sh: img.height, dx: a[0], dy: a[1], dw: img.width, dh: img.height
+                        };
+                    case 4:
+                        return {
+                            sx: 0, sy: 0, sw: img.width, sh: img.height, dx: a[0], dy: a[1], dw: a[2], dh: a[3]
+                        };
+                    case 8:
+                        return {
+                            sx: a[0], sy: a[1], sw: a[2], sh: a[3], dx: a[4], dy: a[5], dw: a[6], dh: a[7]
+                        };
+                    default:
+                        return null;
+                }
+            }
+            if (CanvasRenderingContext2D.prototype.__lezhinHooked) return;
+            CanvasRenderingContext2D.prototype.__lezhinHooked = true;
+            const originalDrawImage = CanvasRenderingContext2D.prototype.drawImage;
+            CanvasRenderingContext2D.prototype.drawImage = function(img, ...args) {
+                originalDrawImage.apply(this, [img, ...args]);
+                state.canvas.lastDrawTs = performance.now();
+                if (state.canvas.idleTimer) {
+                    clearTimeout(state.canvas.idleTimer);
+                }
+                state.canvas.idleTimer = setTimeout(() => {
+                    const resolver = state.canvas.idleResolver;
+                    state.canvas.idleResolver = null;
+                    if (resolver) resolver(true);
+                }, state.canvas.idleWaitMs || 700);
+                if (!img?.src || isPromoImage(img)) return;
+                const op = getCanvasImageData(img, args);
+                if (!op) return;
+                const pageIndex = getVisiblePageIndex(this.canvas);
+                if (pageIndex == null) return;
+                const store = state.canvas.enabled ?
+                    state.canvas.pages :
+                    state.canvas.buffer;
+                if (!store.has(pageIndex)) {
+                    store.set(pageIndex, {
+                        pageIndex,
+                        url: img.src,
+                        width: this.canvas.width,
+                        height: this.canvas.height,
+                        ops: []
+                    });
+                }
+                store.get(pageIndex).ops.push(op);
             };
-        });
-    }
-
-    async function collectCanvasPages(session, onProgress) {
-        scrollToComicPage(null, 'smooth');
-        state.canvas.pages = new Map(state.canvas.buffer);
-        state.canvas.buffer.clear();
-        state.canvas.enabled = true;
-        const special = getViewerLayoutConfig();
-        const cuts = special.enabled ?
-            special.safeCuts :
-            getIndexedComicCuts();
-        const total = cuts.length;
-        await new Promise(r => setTimeout(r, 300));
-        for (const cut of cuts) {
-            if (session.cancelled) break;
-            const pageStarted = performance.now();
-            const index = Number(cut.dataset.cutIndex);
-            const precollected = state.canvas.pages.has(index);
-            scrollToComicPage(
-                index,
-                'smooth'
-            );
-            await new Promise(r => setTimeout(r, 300));
-            logCollection('PAGE', {
-                method: 'canvas-scroll',
-                phase: 'initial',
-                index,
-                outcome: session.cancelled ? 'cancelled' : precollected ? 'already-collected' : state.canvas.pages.has(index) ? 'collected' : 'still-missing',
-                startedAt: pageStarted,
-                waitBudgetMs: 300
-            });
-            onProgress(state.canvas.pages.size, total);
         }
-        const missingInitial = findMissingPages(state.canvas.pages);
-        if (!missingInitial.length) {
+
+        async function waitForCanvasIdle(ms = 700, timeout = 6000) {
+            state.canvas.idleWaitMs = ms;
+            if (!state.canvas.lastDrawTs) {
+                return true;
+            }
+            return new Promise(resolve => {
+                const timeoutId = setTimeout(() => {
+                    state.canvas.idleResolver = null;
+                    resolve(false);
+                }, timeout);
+                state.canvas.idleResolver = () => {
+                    clearTimeout(timeoutId);
+                    resolve(true);
+                };
+            });
+        }
+
+        async function collectCanvasPages(session, onProgress) {
+            scrollToComicPage(null, 'smooth');
+            state.canvas.pages = new Map(state.canvas.buffer);
+            state.canvas.buffer.clear();
+            state.canvas.enabled = true;
+            const special = getViewerLayoutConfig();
+            const cuts = special.enabled ?
+                special.safeCuts :
+                getIndexedComicCuts();
+            const total = cuts.length;
+            await new Promise(r => setTimeout(r, 300));
+            for (const cut of cuts) {
+                if (session.cancelled) break;
+                const pageStarted = performance.now();
+                const index = Number(cut.dataset.cutIndex);
+                const precollected = state.canvas.pages.has(index);
+                scrollToComicPage(
+                    index,
+                    'smooth'
+                );
+                await new Promise(r => setTimeout(r, 300));
+                logCollection('PAGE', {
+                    method: 'canvas-scroll',
+                    phase: 'initial',
+                    index,
+                    outcome: session.cancelled ? 'cancelled' : precollected ? 'already-collected' : state.canvas.pages.has(index) ? 'collected' : 'still-missing',
+                    startedAt: pageStarted,
+                    waitBudgetMs: 300
+                });
+                onProgress(state.canvas.pages.size, total);
+            }
+            const missingInitial = findMissingPages(state.canvas.pages);
+            if (!missingInitial.length) {
+                state.canvas.enabled = false;
+                return [...state.canvas.pages.values()]
+                    .filter(p => p.ops.length)
+                    .sort((a, b) => a.pageIndex - b.pageIndex);
+            }
             state.canvas.enabled = false;
+            let previousMissingCount = Infinity;
+            let cyclesUsed = 0;
+            let cycleStopReason = 'attempt-limit';
+            for (let attempt = 0; attempt < 4 && !session.cancelled; attempt++) {
+                const missing = findMissingPages(state.canvas.pages);
+                if (!missing.length) {
+                    cycleStopReason = 'complete';
+                    break;
+                }
+                if (missing.length >= previousMissingCount) {
+                    cycleStopReason = 'no-progress';
+                    break;
+                }
+                cyclesUsed++;
+                logCollection('RETRY CYCLE', {
+                    method: 'canvas-scroll',
+                    cycle: cyclesUsed,
+                    maxCycles: 4
+                });
+                previousMissingCount = missing.length;
+                await retryMissingPages(
+                    session,
+                    state.canvas.pages,
+                    onProgress, {
+                        beforeAttempt: async () => {
+                            state.canvas.enabled = true;
+                        },
+                        afterAttempt: async () => {
+                            state.canvas.enabled = false;
+                        },
+                        idleWait: true,
+                        nudgeScroll: true
+                    }
+                );
+            }
+            const remaining = findMissingPages(state.canvas.pages);
+            logCollection('RETRY CYCLES END', {
+                method: 'canvas-scroll',
+                cyclesUsed,
+                maxCycles: 4,
+                stopReason: session.cancelled ? 'cancelled' : !remaining.length ? 'complete' : cycleStopReason,
+                missing: remaining
+            });
             return [...state.canvas.pages.values()]
                 .filter(p => p.ops.length)
                 .sort((a, b) => a.pageIndex - b.pageIndex);
         }
-        state.canvas.enabled = false;
-        let previousMissingCount = Infinity;
-        let cyclesUsed = 0;
-        let cycleStopReason = 'attempt-limit';
-        for (let attempt = 0; attempt < 4 && !session.cancelled; attempt++) {
-            const missing = findMissingPages(state.canvas.pages);
-            if (!missing.length) {
-                cycleStopReason = 'complete';
-                break;
-            }
-            if (missing.length >= previousMissingCount) {
-                cycleStopReason = 'no-progress';
-                break;
-            }
-            cyclesUsed++;
-            logCollection('RETRY CYCLE', {
-                method: 'canvas-scroll',
-                cycle: cyclesUsed,
-                maxCycles: 4
+
+        async function convertCanvasPage(page, mimeType = 'image/png', quality = undefined) {
+            const webpBytes = await getImageData(page.url);
+            const blob = new Blob([webpBytes], {
+                type: 'image/webp'
             });
-            previousMissingCount = missing.length;
-            await retryMissingPages(
-                session,
-                state.canvas.pages,
-                onProgress, {
-                    beforeAttempt: async () => {
-                        state.canvas.enabled = true;
-                    },
-                    afterAttempt: async () => {
-                        state.canvas.enabled = false;
-                    },
-                    idleWait: true,
-                    nudgeScroll: true
-                }
-            );
-        }
-        const remaining = findMissingPages(state.canvas.pages);
-        logCollection('RETRY CYCLES END', {
-            method: 'canvas-scroll',
-            cyclesUsed,
-            maxCycles: 4,
-            stopReason: session.cancelled ? 'cancelled' : !remaining.length ? 'complete' : cycleStopReason,
-            missing: remaining
-        });
-        return [...state.canvas.pages.values()]
-            .filter(p => p.ops.length)
-            .sort((a, b) => a.pageIndex - b.pageIndex);
-    }
-
-    async function convertCanvasPage(page, mimeType = 'image/png', quality = undefined) {
-        const webpBytes = await getImageData(page.url);
-        const blob = new Blob([webpBytes], {
-            type: 'image/webp'
-        });
-        const img = new Image();
-        const url = URL.createObjectURL(blob);
-        img.src = url;
-        await new Promise((resolve, reject) => {
-            img.onload = () => {
-                URL.revokeObjectURL(url);
-                resolve();
-            };
-            img.onerror = e => {
-                URL.revokeObjectURL(url);
-                reject(e);
-            };
-        });
-        const canvas = document.createElement('canvas');
-        canvas.width = page.width;
-        canvas.height = page.height;
-        const ctx = canvas.getContext('2d');
-        page.ops.forEach(op => {
-            ctx.drawImage(
-                img,
-                op.sx, op.sy, op.sw, op.sh,
-                op.dx, op.dy, op.dw, op.dh
-            );
-        });
-        return new Promise(resolve => {
-            canvas.toBlob(async blob => {
-                const buf = await blob.arrayBuffer();
-                resolve(new Uint8Array(buf));
-            }, mimeType, quality);
-        });
-    }
-
-    async function streamCanvasImagesToZip(session, pages, zip, onProgress, useSmallFileSize = false) {
-        const total = pages.length;
-        let completed = 0;
-        onProgress(0, total);
-        const workerCount = getOptimalWorkerCount();
-        const mimeType = useSmallFileSize ? 'image/webp' : 'image/png';
-        const ext = useSmallFileSize ? 'webp' : 'png';
-        await taskQueue(workerCount, pages, async (page, index) => {
-            if (session.cancelled) return;
-            const imgData = await convertCanvasPage(page, mimeType);
-            if (!imgData || session.cancelled) return;
-            const name = generateImageFileName(index + 1, total, ext);
-            const file = new fflate.ZipDeflate(name, {
-                level: 6
+            const img = new Image();
+            const url = URL.createObjectURL(blob);
+            img.src = url;
+            await new Promise((resolve, reject) => {
+                img.onload = () => {
+                    URL.revokeObjectURL(url);
+                    resolve();
+                };
+                img.onerror = e => {
+                    URL.revokeObjectURL(url);
+                    reject(e);
+                };
             });
-            zip.add(file);
-            file.push(imgData, true);
-            completed++;
-            onProgress(completed, total);
-        });
-        return !session.cancelled;
-    }
-
-    function initBlobBackgroundCollector() {
-        if (state.blob.observerInitialized) return;
-        state.blob.observerInitialized = true;
-
-        function getPageContainers() {
-            for (const selector of RENDER_PAGE_SELECTORS) {
-                const nodes = document.querySelectorAll(selector);
-                if (nodes.length) return nodes;
+            const canvas = document.createElement('canvas');
+            canvas.width = page.width;
+            canvas.height = page.height;
+            const ctx = canvas.getContext('2d');
+            if (mimeType === 'image/jpeg') {
+                ctx.fillStyle = '#FFF';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
             }
-            return [];
-        }
-
-        function captureVisibleBlobs() {
-            const containers = getPageContainers();
-            if (!containers.length) return;
-            containers.forEach((el, i) => {
-                const index = i + 1;
-                if (state.blob.pages.has(index)) return;
-                const img = el.querySelector('img[src^="blob:"]');
-                if (!img || !img.complete) return;
-                state.blob.pages.set(index, img);
-                console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - BLOB IMAGE COLLECTED: ${index}`);
+            page.ops.forEach(op => {
+                ctx.drawImage(
+                    img,
+                    op.sx, op.sy, op.sw, op.sh,
+                    op.dx, op.dy, op.dw, op.dh
+                );
+            });
+            return new Promise((resolve, reject) => {
+                canvas.toBlob(blob => {
+                    if (!blob) return reject(new Error(DOWNLOAD_ERROR_MAP.JPEG_CONVERSION_FAILED.code));
+                    blob.arrayBuffer().then(buf => resolve(new Uint8Array(buf)), reject);
+                }, mimeType, quality);
             });
         }
-        const observer = new MutationObserver(() => {
-            captureVisibleBlobs();
-        });
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true,
-            attributes: true,
-            attributeFilter: ['src']
-        });
-        captureVisibleBlobs();
+
+        async function streamCanvasImagesToZip(session, pages, zip, onProgress, useSmallFileSize = false) {
+            const total = pages.length;
+            let completed = 0;
+            onProgress(0, total);
+            const workerCount = getOptimalWorkerCount();
+            const mimeType = useSmallFileSize ? 'image/webp' : 'image/png';
+            const ext = useSmallFileSize ? 'webp' : 'png';
+            await taskQueue(workerCount, pages, async (page, index) => {
+                if (session.cancelled) return;
+                const imgData = await convertCanvasPage(page, mimeType);
+                if (!imgData || session.cancelled) return;
+                const name = generateImageFileName(index + 1, total, ext);
+                const file = new fflate.ZipDeflate(name, {
+                    level: 6
+                });
+                zip.add(file);
+                file.push(imgData, true);
+                completed++;
+                onProgress(completed, total);
+            });
+            return !session.cancelled;
+        }
+
+        async function buildCanvasPDFFiles(session, pages, onProgress) {
+            const files = {};
+            onProgress(0, pages.length);
+            for (let i = 0; i < pages.length; i++) {
+                if (session.cancelled) throwDownloadError('DOWNLOAD_ABORTED');
+                files[generateImageFileName(i + 1, pages.length)] =
+                    await convertCanvasPage(pages[i], 'image/jpeg', 0.92);
+                onProgress(i + 1, pages.length);
+            }
+            return files;
+        }
+
+        return {
+            normal: collectCanvasPages,
+            horizontal: {},
+            init: initCanvasDrawHook,
+            waitForIdle: waitForCanvasIdle,
+            streamZip: streamCanvasImagesToZip,
+            buildPDFFiles: buildCanvasPDFFiles,
+        };
     }
 
-    async function collectBlobPages(
-        session,
-        onProgress
-    ) {
-        function formatPageRanges(pages) {
-            if (!pages.length) return '';
-            const sorted = [...pages].sort((a, b) => a - b);
-            const ranges = [];
-            let start = sorted[0];
-            let end = sorted[0];
-            for (let i = 1; i < sorted.length; i++) {
-                if (sorted[i] === end + 1) {
-                    end = sorted[i];
-                } else {
-                    ranges.push(start === end ? `${start}` : `${start}-${end}`);
-                    start = end = sorted[i];
-                }
-            }
-            ranges.push(start === end ? `${start}` : `${start}-${end}`);
-            return ranges.join(', ');
-        }
-        async function collectBlobPagesDeterministic() {
-            const WAIT_AFTER_SCROLL_MS = 250;
-            const STALL_TIMEOUT_MS = 1500;
-            const collected = new Map();
-            const layout = getViewerLayoutConfig();
-            let lastCount = 0;
-            let pendingObservation = null;
-            const initialStarted = performance.now();
-            let lastProgressTs = performance.now();
+    function createBlobMethod() {
+        function initBlobBackgroundCollector() {
+            if (state.blob.observerInitialized) return;
+            state.blob.observerInitialized = true;
 
             function getPageContainers() {
                 for (const selector of RENDER_PAGE_SELECTORS) {
-                    const nodes =
-                        document.querySelectorAll(
-                            selector
-                        );
-                    if (nodes.length) {
-                        return nodes;
-                    }
+                    const nodes = document.querySelectorAll(selector);
+                    if (nodes.length) return nodes;
                 }
                 return [];
             }
 
-            function extractHydratedBlobs(
-                containers
-            ) {
-                const results = [];
+            function captureVisibleBlobs() {
+                const containers = getPageContainers();
+                if (!containers.length) return;
                 containers.forEach((el, i) => {
-                    const img = el.querySelector(
-                        'img[src^="blob:"]'
-                    );
-                    if (!img) return;
-                    if (!img.complete) return;
-                    results.push({
-                        index: i + 1,
-                        img
-                    });
+                    const index = i + 1;
+                    if (state.blob.pages.has(index)) return;
+                    const img = getCutImage(el, 'img[src^="blob:"]');
+                    if (!img || !img.complete || !img.naturalWidth) return;
+                    state.blob.pages.set(index, img);
+                    console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - BLOB IMAGE COLLECTED: ${index}`);
                 });
-                return results;
             }
+            const observer = new MutationObserver(() => {
+                captureVisibleBlobs();
+            });
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['src']
+            });
+            captureVisibleBlobs();
+        }
 
-            function scrollToFirstMissing(
-                totalContainers
-            ) {
-                const allIndexes = [
-                    ...Array(totalContainers).keys()
-                ].map(i => i + 1);
-                const firstMissing =
-                    allIndexes.find(
-                        i => !collected.has(i)
-                    );
-                if (firstMissing == null) {
-                    return;
+        async function collectNormalBlobImages(session, onProgress) {
+            const layout = getViewerLayoutConfig();
+            const expectedCount = layout.pageSource === 'cuts' ?
+                getAllPageIndexes().length : getTotalPageCount();
+            if (state.blob.pages.size !== expectedCount) {
+                state.blob.pages.clear();
+                for (const [index, data] of state.blob.buffer) {
+                    const blob = new Blob([data], {
+                        type: 'image/png'
+                    });
+                    const img = new Image();
+                    img.src = URL.createObjectURL(blob);
+                    state.blob.pages.set(index, img);
                 }
-                const isLast =
-                    firstMissing >= totalContainers;
-                if (
-                    layout.scroll
-                    .preventLastScroll &&
-                    isLast
-                ) {
-                    return;
+                state.blob.buffer.clear();
+                state.blob.enabled = true;
+                try {
+                    await collectBlobPages(session, onProgress);
+                } finally {
+                    state.blob.enabled = false;
                 }
-                pendingObservation = {
-                    index: firstMissing,
-                    started: performance.now()
-                };
-                scrollToComicPage(
-                    firstMissing, {
-                        instant: true,
-                        allowLastPage:
-                            !layout.scroll
-                            .preventLastScroll
-                    }
-                );
             }
-            while (!session.cancelled) {
-                const containers =
-                    getPageContainers();
-                const totalContainers =
-                    containers.length;
-                const blobs =
-                    extractHydratedBlobs(
-                        containers
-                    );
-                for (const {
-                        index,
-                        img
+            return getOrderedBlobPageList(state.blob.pages);
+        }
+
+        async function collectJpBlobImages(session, onProgress) {
+            const pages = new Map(state.blob.pages);
+            const collected = await collectHorizontalBlobPages(session, onProgress, pages);
+            for (const [index, image] of collected) pages.set(index, image);
+            state.blob.pages = pages;
+            return getOrderedBlobPageList(pages);
+        }
+
+        async function collectBlobPages(
+            session,
+            onProgress
+        ) {
+            function formatPageRanges(pages) {
+                if (!pages.length) return '';
+                const sorted = [...pages].sort((a, b) => a - b);
+                const ranges = [];
+                let start = sorted[0];
+                let end = sorted[0];
+                for (let i = 1; i < sorted.length; i++) {
+                    if (sorted[i] === end + 1) {
+                        end = sorted[i];
+                    } else {
+                        ranges.push(start === end ? `${start}` : `${start}-${end}`);
+                        start = end = sorted[i];
                     }
-                    of blobs) {
-                    if (!collected.has(index)) {
-                        collected.set(index, img);
-                        if (pendingObservation?.index !== index) {
-                            logCollection('PAGE', {
-                                method: 'blob-scan-scroll',
-                                phase: 'initial',
-                                index,
-                                outcome: 'observed-available',
-                                startedAt: null,
-                                timingNote: 'No individual scroll start (may be preloaded or loaded alongside another page)'
-                            });
+                }
+                ranges.push(start === end ? `${start}` : `${start}-${end}`);
+                return ranges.join(', ');
+            }
+            async function collectBlobPagesDeterministic() {
+                const WAIT_AFTER_SCROLL_MS = 250;
+                const STALL_TIMEOUT_MS = 1500;
+                const collected = new Map();
+                const layout = getViewerLayoutConfig();
+                let lastCount = 0;
+                let pendingObservation = null;
+                const initialStarted = performance.now();
+                let lastProgressTs = performance.now();
+
+                function getPageContainers() {
+                    for (const selector of RENDER_PAGE_SELECTORS) {
+                        const nodes =
+                            document.querySelectorAll(
+                                selector
+                            );
+                        if (nodes.length) {
+                            return nodes;
                         }
+                    }
+                    return [];
+                }
+
+                function extractHydratedBlobs(
+                    containers
+                ) {
+                    const results = [];
+                    containers.forEach((el, i) => {
+                        const img = getCutImage(el, 'img[src^="blob:"]');
+                        if (!img) return;
+                        if (!img.complete || !img.naturalWidth) return;
+                        results.push({
+                            index: i + 1,
+                            img
+                        });
+                    });
+                    return results;
+                }
+
+                function scrollToFirstMissing(
+                    totalContainers
+                ) {
+                    const allIndexes = [
+                        ...Array(totalContainers).keys()
+                    ].map(i => i + 1);
+                    const firstMissing =
+                        allIndexes.find(
+                            i => !collected.has(i)
+                        );
+                    if (firstMissing == null) {
+                        return;
+                    }
+                    const isLast =
+                        firstMissing >= totalContainers;
+                    if (
+                        layout.scroll
+                        .preventLastScroll &&
+                        isLast
+                    ) {
+                        return;
+                    }
+                    pendingObservation = {
+                        index: firstMissing,
+                        started: performance.now()
+                    };
+                    scrollToComicPage(
+                        firstMissing, {
+                            instant: true,
+                            allowLastPage:
+                                !layout.scroll
+                                .preventLastScroll
+                        }
+                    );
+                }
+                while (!session.cancelled) {
+                    const containers =
+                        getPageContainers();
+                    const totalContainers =
+                        containers.length;
+                    const blobs =
+                        extractHydratedBlobs(
+                            containers
+                        );
+                    for (const {
+                            index,
+                            img
+                        }
+                        of blobs) {
+                        if (!collected.has(index)) {
+                            collected.set(index, img);
+                            if (pendingObservation?.index !== index) {
+                                logCollection('PAGE', {
+                                    method: 'blob-scan-scroll',
+                                    phase: 'initial',
+                                    index,
+                                    outcome: 'observed-available',
+                                    startedAt: null,
+                                    timingNote: 'No individual scroll start (may be preloaded or loaded alongside another page)'
+                                });
+                            }
+                        }
+                    }
+                    if (pendingObservation) {
+                        logCollection('PAGE', {
+                            method: 'blob-scan-scroll',
+                            phase: 'initial',
+                            index: pendingObservation.index,
+                            outcome: collected.has(pendingObservation.index) ? 'collected' : 'still-missing',
+                            startedAt: pendingObservation.started,
+                            waitBudgetMs: WAIT_AFTER_SCROLL_MS
+                        });
+                        pendingObservation = null;
+                    }
+                    onProgress?.(collected.size);
+                    if (
+                        totalContainers > 0 &&
+                        collected.size >=
+                        totalContainers
+                    ) {
+                        break;
+                    }
+                    if (
+                        collected.size ===
+                        lastCount
+                    ) {
+                        if (
+                            performance.now() -
+                            lastProgressTs >
+                            STALL_TIMEOUT_MS
+                        ) {
+                            logCollection('INITIAL STALLED', {
+                                method: 'blob-scan-scroll',
+                                collected: collected.size,
+                                total: totalContainers,
+                                stopReason: 'no-progress'
+                            }, 'warn');
+                            break;
+                        }
+                    } else {
+                        lastProgressTs =
+                            performance.now();
+                        lastCount =
+                            collected.size;
+                    }
+                    if (
+                        collected.size <
+                        totalContainers
+                    ) {
+                        scrollToFirstMissing(
+                            totalContainers
+                        );
+                        await new Promise(r =>
+                            setTimeout(
+                                r,
+                                WAIT_AFTER_SCROLL_MS
+                            )
+                        );
                     }
                 }
                 if (pendingObservation) {
@@ -2591,505 +2828,550 @@
                         method: 'blob-scan-scroll',
                         phase: 'initial',
                         index: pendingObservation.index,
-                        outcome: collected.has(pendingObservation.index) ? 'collected' : 'still-missing',
-                        startedAt: pendingObservation.started,
-                        waitBudgetMs: WAIT_AFTER_SCROLL_MS
+                        outcome: 'cancelled',
+                        startedAt: pendingObservation.started
                     });
-                    pendingObservation = null;
                 }
-                onProgress?.(collected.size);
-                if (
-                    totalContainers > 0 &&
-                    collected.size >=
-                    totalContainers
-                ) {
-                    break;
-                }
-                if (
-                    collected.size ===
-                    lastCount
-                ) {
-                    if (
-                        performance.now() -
-                        lastProgressTs >
-                        STALL_TIMEOUT_MS
-                    ) {
-                        logCollection('INITIAL STALLED', {
-                            method: 'blob-scan-scroll',
-                            collected: collected.size,
-                            total: totalContainers,
-                            stopReason: 'no-progress'
-                        }, 'warn');
-                        break;
-                    }
-                } else {
-                    lastProgressTs =
-                        performance.now();
-                    lastCount =
-                        collected.size;
-                }
-                if (
-                    collected.size <
-                    totalContainers
-                ) {
-                    scrollToFirstMissing(
-                        totalContainers
-                    );
-                    await new Promise(r =>
-                        setTimeout(
-                            r,
-                            WAIT_AFTER_SCROLL_MS
-                        )
-                    );
-                }
-            }
-            if (pendingObservation) {
-                logCollection('PAGE', {
+                logCollection('INITIAL END', {
                     method: 'blob-scan-scroll',
-                    phase: 'initial',
-                    index: pendingObservation.index,
-                    outcome: 'cancelled',
-                    startedAt: pendingObservation.started
+                    collected: collected.size,
+                    stopReason: session.cancelled ? 'cancelled' : collected.size >= getPageContainers().length && collected.size > 0 ? 'complete' : 'no-progress',
+                    stallTimeoutMs: STALL_TIMEOUT_MS,
+                    startedAt: initialStarted
                 });
+                return collected;
             }
-            logCollection('INITIAL END', {
-                method: 'blob-scan-scroll',
-                collected: collected.size,
-                stopReason: session.cancelled ? 'cancelled' : collected.size >= getPageContainers().length && collected.size > 0 ? 'complete' : 'no-progress',
-                stallTimeoutMs: STALL_TIMEOUT_MS,
-                startedAt: initialStarted
-            });
-            return collected;
-        }
-        const collected =
-            await collectBlobPagesDeterministic();
-        for (const [
-                index,
-                img
-            ] of collected.entries()) {
-            if (
-                !state.blob.pages.has(index)
-            ) {
-                state.blob.pages.set(
+            const collected =
+                await collectBlobPagesDeterministic();
+            for (const [
                     index,
                     img
-                );
-            }
-        }
-        const retryStarted = performance.now();
-        let attemptsUsed = 0;
-        let stopReason = 'attempt-limit';
-        const BLOB_RETRY_ATTEMPTS = 4;
-        const BLOB_PAGE_HYDRATION_TIMEOUT_MS = 5000;
-        let previousMissingKey = null;
-
-        function waitForHydratedBlob(index) {
-            return new Promise(resolve => {
-                const container = getIndexedComicCuts().find(cut =>
-                    Number(cut.dataset.cutIndex) === index
-                );
-                if (!container) {
-                    resolve({
-                        img: null,
-                        outcome: 'container-not-found',
-                        details: 'CONTAINER NOT FOUND'
-                    });
-                    return;
+                ] of collected.entries()) {
+                if (
+                    !state.blob.pages.has(index)
+                ) {
+                    state.blob.pages.set(
+                        index,
+                        img
+                    );
                 }
-                let observedImage = null;
-                let settled = false;
-                const getImage = () => container.querySelector('img');
-                const getDetails = () => {
-                    const img = getImage();
-                    return `IMG: ${img ? 'PRESENT' : 'NOT FOUND'} | ` +
-                        `SRC: ${img?.src || 'NONE'} | ` +
-                        `COMPLETE: ${img?.complete ? 'TRUE' : 'FALSE'} | ` +
-                        `NATURAL_WIDTH: ${img?.naturalWidth || 0}`;
-                };
-                const isHydratedBlob = img =>
-                    img &&
-                    img.src.startsWith('blob:') &&
-                    img.complete &&
-                    img.naturalWidth > 0;
-                const cleanup = () => {
-                    observer.disconnect();
-                    clearTimeout(timeout);
-                };
-                const finish = img => {
-                    if (settled) return;
-                    settled = true;
-                    cleanup();
-                    resolve({
-                        img,
-                        outcome: img ? 'hydrated' : 'timeout',
-                        details: getDetails()
-                    });
-                };
-                const check = () => {
-                    const img = getImage();
-                    if (isHydratedBlob(img)) {
-                        finish(img);
+            }
+            const retryStarted = performance.now();
+            let attemptsUsed = 0;
+            let stopReason = 'attempt-limit';
+            const BLOB_RETRY_ATTEMPTS = 4;
+            const BLOB_PAGE_HYDRATION_TIMEOUT_MS = 5000;
+            let previousMissingKey = null;
+
+            function waitForHydratedBlob(index) {
+                return new Promise(resolve => {
+                    const container = getIndexedComicCuts().find(cut =>
+                        Number(cut.dataset.cutIndex) === index
+                    );
+                    if (!container) {
+                        resolve({
+                            img: null,
+                            outcome: 'container-not-found',
+                            details: 'CONTAINER NOT FOUND'
+                        });
                         return;
                     }
-                    if (img && img !== observedImage) {
-                        observedImage = img;
-                        img.addEventListener('load', check, {
-                            once: true
-                        });
-                    }
-                };
-                const observer = new MutationObserver(check);
-                observer.observe(container, {
-                    childList: true,
-                    subtree: true,
-                    attributes: true,
-                    attributeFilter: ['src']
-                });
-                const timeout = setTimeout(
-                    () => finish(null),
-                    BLOB_PAGE_HYDRATION_TIMEOUT_MS
-                );
-                check();
-            });
-        }
-        for (
-            let attempt = 0; attempt <
-            BLOB_RETRY_ATTEMPTS &&
-            !session.cancelled; attempt++
-        ) {
-            const missing =
-                findMissingPages(
-                    state.blob.pages
-                );
-            if (!missing.length) {
-                break;
-            }
-            const missingKey =
-                formatPageRanges(missing);
-            logCollection('RETRY MISSING', {
-                method: 'blob-hydration-scroll',
-                missing
-            });
-            if (
-                missingKey ===
-                previousMissingKey
-            ) {
-                stopReason = 'no-progress';
-                logCollection('RETRY STALLED', {
-                    method: 'blob-hydration-scroll',
-                    stopReason: 'no-progress',
-                    missing
-                }, 'warn');
-                break;
-            }
-            previousMissingKey =
-                missingKey;
-            attemptsUsed++;
-            logCollection('RETRY ATTEMPT', {
-                method: 'blob-hydration-scroll',
-                attempt: attemptsUsed,
-                maxAttempts: BLOB_RETRY_ATTEMPTS,
-                waitBudgetMs: BLOB_PAGE_HYDRATION_TIMEOUT_MS,
-                missing
-            });
-            for (const index of missing) {
-                if (
-                    session.cancelled
-                ) {
-                    break;
-                }
-                scrollToComicPage(index, {
-                    instant: true,
-                    allowLastPage: false
-                });
-                const pageStarted = performance.now();
-                const result = await waitForHydratedBlob(index);
-                logCollection('PAGE', {
-                    method: 'blob-hydration-scroll',
-                    phase: 'retry',
-                    index,
-                    outcome: session.cancelled ? 'cancelled' : result.outcome,
-                    startedAt: pageStarted,
-                    attempt: attemptsUsed,
-                    maxAttempts: BLOB_RETRY_ATTEMPTS,
-                    waitBudgetMs: BLOB_PAGE_HYDRATION_TIMEOUT_MS
-                });
-                if (!result.img) {
-                    logCollection('PAGE HYDRATION FAILED', {
-                        method: 'blob-hydration-scroll',
-                        phase: 'retry',
-                        index,
-                        outcome: result.outcome,
-                        details: result.details
-                    }, 'warn');
-                    continue;
-                }
-                state.blob.pages.set(index, result.img);
-                logCollection('RETRY RECOVERED', {
-                    method: 'blob-hydration-scroll',
-                    index
-                });
-                onProgress?.(state.blob.pages.size);
-                await new Promise(r => setTimeout(r, 120));
-            }
-        }
-        const finalMissing =
-            findMissingPages(
-                state.blob.pages
-            );
-        logCollection('RETRY END', {
-            method: 'blob-hydration-scroll',
-            attemptsUsed,
-            maxAttempts: BLOB_RETRY_ATTEMPTS,
-            stopReason: session.cancelled ? 'cancelled' : !finalMissing.length ? 'complete' : stopReason,
-            missing: finalMissing,
-            startedAt: retryStarted
-        });
-        return state.blob.pages;
-    }
-
-    async function collectHorizontalBlobPages(session, onProgress, existing = new Map()) {
-        const footerSelector = UI_PAGE_SELECTORS.footer;
-        const spreadSelector = RENDER_PAGE_SELECTORS_HORIZONTAL.jp.spread;
-        const wrapperSelector = RENDER_PAGE_SELECTORS_HORIZONTAL.jp.horizontalWrapper;
-        let cachedPage = null;
-
-        function getFooterPageNumbers() {
-            const footer = document.querySelector(footerSelector);
-            if (!footer) return null;
-            const spans = footer.querySelectorAll('span');
-            let current = null;
-            let total = null;
-            for (let i = 0; i < spans.length; i++) {
-                const n = Number(spans[i].textContent.trim());
-                if (!Number.isFinite(n) || n <= 0) continue;
-                if (current === null) current = n;
-                else {
-                    total = n;
-                    break;
-                }
-            }
-            if (current !== null && total !== null) {
-                return {
-                    current,
-                    total
-                };
-            }
-            return null;
-        }
-
-        function updateCachedPage() {
-            const data = getFooterPageNumbers();
-            if (data) cachedPage = data.current;
-            return cachedPage;
-        }
-        const getCurrentPageNumber = () => cachedPage ?? updateCachedPage();
-        const getTotalPages = () =>
-            getFooterPageNumbers()?.total ?? getTotalPageCount();
-
-        function dispatchArrowKey(key) {
-            document.dispatchEvent(
-                new KeyboardEvent('keydown', {
-                    key,
-                    code: key,
-                    bubbles: true,
-                    cancelable: true
-                })
-            );
-        }
-
-        function getActiveSpread() {
-            const spreads = document.querySelectorAll(spreadSelector);
-            for (const s of spreads) {
-                const r = s.style.right;
-                if (r === '0%' || r === '0px' || r === '') return s;
-            }
-            return spreads[0] || null;
-        }
-
-        function getActiveImage(spreadEl) {
-            return spreadEl?.querySelector('img[src^="blob:"]') || null;
-        }
-
-        function waitForPageChange(prev, timeout = 3000) {
-            return new Promise(resolve => {
-                const start = performance.now();
-
-                function tick() {
-                    if (session.cancelled) return resolve(false);
-                    const current = updateCachedPage();
-                    if (current !== null && current !== prev) {
-                        return resolve(true);
-                    }
-                    if (performance.now() - start > timeout) {
-                        return resolve(false);
-                    }
-                    requestAnimationFrame(tick);
-                }
-                tick();
-            });
-        }
-
-        function waitForImage(spreadEl, timeout = 3000) {
-            return new Promise(resolve => {
-                const start = performance.now();
-
-                function tick() {
-                    const img = getActiveImage(spreadEl);
-                    if (
+                    let observedImage = null;
+                    let settled = false;
+                    const getImage = () => getCutImage(container);
+                    const getDetails = () => {
+                        const img = getImage();
+                        return `IMG: ${img ? 'PRESENT' : 'NOT FOUND'} | ` +
+                            `SRC: ${img?.src || 'NONE'} | ` +
+                            `COMPLETE: ${img?.complete ? 'TRUE' : 'FALSE'} | ` +
+                            `NATURAL_WIDTH: ${img?.naturalWidth || 0}`;
+                    };
+                    const isHydratedBlob = img =>
                         img &&
                         img.src.startsWith('blob:') &&
                         img.complete &&
-                        img.naturalWidth > 0
-                    ) {
-                        return resolve(img);
-                    }
-                    if (performance.now() - start > timeout) {
-                        return resolve(null);
-                    }
-                    requestAnimationFrame(tick);
-                }
-                tick();
-            });
-        }
-        const wrapper = document.querySelector(wrapperSelector);
-        if (!wrapper || session.cancelled) return new Map();
-        const total = getTotalPages();
-        const result = new Array(total);
-        const seenSrcs = new Set();
-        for (const [index, img] of existing.entries()) {
-            result[index - 1] = img;
-            seenSrcs.add(img.src);
-        }
-        updateCachedPage();
-        let guard = 0;
-        while (guard < total + 5 && !session.cancelled) {
-            const current = getCurrentPageNumber();
-            if (current === 1) break;
-            dispatchArrowKey('ArrowRight');
-            await waitForPageChange(current, 1500);
-            guard++;
-        }
-        await new Promise(r => setTimeout(r, 300));
-        for (let pageNum = 1; pageNum <= total; pageNum++) {
-            if (session.cancelled) break;
-            if (result[pageNum - 1]) continue;
-            let spreadEl = getActiveSpread();
-            let img = null;
-            const MAX_RETRIES = 4;
-            for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-                const pageStarted = performance.now();
-                img = await waitForImage(spreadEl, 3000);
-                logCollection('PAGE', {
-                    method: 'blob-horizontal-hydration',
-                    phase: attempt === 0 ? 'initial' : 'retry',
-                    index: pageNum,
-                    outcome: session.cancelled ? 'cancelled' : img ? 'hydrated' : 'timeout',
-                    startedAt: pageStarted,
-                    attempt: attempt + 1,
-                    maxAttempts: MAX_RETRIES,
-                    waitBudgetMs: 3000
+                        img.naturalWidth > 0;
+                    const cleanup = () => {
+                        observer.disconnect();
+                        clearTimeout(timeout);
+                    };
+                    const finish = img => {
+                        if (settled) return;
+                        settled = true;
+                        cleanup();
+                        resolve({
+                            img,
+                            outcome: img ? 'hydrated' : 'timeout',
+                            details: getDetails()
+                        });
+                    };
+                    const check = () => {
+                        const img = getImage();
+                        if (isHydratedBlob(img)) {
+                            finish(img);
+                            return;
+                        }
+                        if (img && img !== observedImage) {
+                            observedImage = img;
+                            img.addEventListener('load', check, {
+                                once: true
+                            });
+                        }
+                    };
+                    const observer = new MutationObserver(check);
+                    observer.observe(container, {
+                        childList: true,
+                        subtree: true,
+                        attributes: true,
+                        attributeFilter: ['src']
+                    });
+                    const timeout = setTimeout(
+                        () => finish(null),
+                        BLOB_PAGE_HYDRATION_TIMEOUT_MS
+                    );
+                    check();
                 });
-                if (img) break;
-                await new Promise(r => setTimeout(r, 250));
-                spreadEl = getActiveSpread();
             }
-            logCollection('PAGE ATTEMPTS END', {
-                method: 'blob-horizontal-hydration',
-                index: pageNum,
-                stopReason: session.cancelled ? 'cancelled' : img ? 'complete' : 'attempt-limit',
-                maxAttempts: MAX_RETRIES
+            for (
+                let attempt = 0; attempt <
+                BLOB_RETRY_ATTEMPTS &&
+                !session.cancelled; attempt++
+            ) {
+                const missing =
+                    findMissingPages(
+                        state.blob.pages
+                    );
+                if (!missing.length) {
+                    break;
+                }
+                const missingKey =
+                    formatPageRanges(missing);
+                logCollection('RETRY MISSING', {
+                    method: 'blob-hydration-scroll',
+                    missing
+                });
+                if (
+                    missingKey ===
+                    previousMissingKey
+                ) {
+                    stopReason = 'no-progress';
+                    logCollection('RETRY STALLED', {
+                        method: 'blob-hydration-scroll',
+                        stopReason: 'no-progress',
+                        missing
+                    }, 'warn');
+                    break;
+                }
+                previousMissingKey =
+                    missingKey;
+                attemptsUsed++;
+                logCollection('RETRY ATTEMPT', {
+                    method: 'blob-hydration-scroll',
+                    attempt: attemptsUsed,
+                    maxAttempts: BLOB_RETRY_ATTEMPTS,
+                    waitBudgetMs: BLOB_PAGE_HYDRATION_TIMEOUT_MS,
+                    missing
+                });
+                for (const index of missing) {
+                    if (
+                        session.cancelled
+                    ) {
+                        break;
+                    }
+                    scrollToComicPage(index, {
+                        instant: true,
+                        allowLastPage: false
+                    });
+                    const pageStarted = performance.now();
+                    const result = await waitForHydratedBlob(index);
+                    logCollection('PAGE', {
+                        method: 'blob-hydration-scroll',
+                        phase: 'retry',
+                        index,
+                        outcome: session.cancelled ? 'cancelled' : result.outcome,
+                        startedAt: pageStarted,
+                        attempt: attemptsUsed,
+                        maxAttempts: BLOB_RETRY_ATTEMPTS,
+                        waitBudgetMs: BLOB_PAGE_HYDRATION_TIMEOUT_MS
+                    });
+                    if (!result.img) {
+                        logCollection('PAGE HYDRATION FAILED', {
+                            method: 'blob-hydration-scroll',
+                            phase: 'retry',
+                            index,
+                            outcome: result.outcome,
+                            details: result.details
+                        }, 'warn');
+                        continue;
+                    }
+                    state.blob.pages.set(index, result.img);
+                    logCollection('RETRY RECOVERED', {
+                        method: 'blob-hydration-scroll',
+                        index
+                    });
+                    onProgress?.(state.blob.pages.size);
+                    await new Promise(r => setTimeout(r, 120));
+                }
+            }
+            const finalMissing =
+                findMissingPages(
+                    state.blob.pages
+                );
+            logCollection('RETRY END', {
+                method: 'blob-hydration-scroll',
+                attemptsUsed,
+                maxAttempts: BLOB_RETRY_ATTEMPTS,
+                stopReason: session.cancelled ? 'cancelled' : !finalMissing.length ? 'complete' : stopReason,
+                missing: finalMissing,
+                startedAt: retryStarted
             });
-            if (!img) {
-                logCollection('PAGE FAILED', {
-                    method: 'blob-horizontal-hydration',
-                    index: pageNum
-                }, 'warn');
-                continue;
+            return state.blob.pages;
+        }
+
+        async function collectHorizontalBlobPages(session, onProgress, existing = new Map()) {
+            const footerSelector = UI_PAGE_SELECTORS.footer;
+            const spreadSelector = RENDER_PAGE_SELECTORS_HORIZONTAL.jp.spread;
+            const wrapperSelector = RENDER_PAGE_SELECTORS_HORIZONTAL.jp.horizontalWrapper;
+            let cachedPage = null;
+
+            function getFooterPageNumbers() {
+                const footer = document.querySelector(footerSelector);
+                if (!footer) return null;
+                const spans = footer.querySelectorAll('span');
+                let current = null;
+                let total = null;
+                for (let i = 0; i < spans.length; i++) {
+                    const n = Number(spans[i].textContent.trim());
+                    if (!Number.isFinite(n) || n <= 0) continue;
+                    if (current === null) current = n;
+                    else {
+                        total = n;
+                        break;
+                    }
+                }
+                if (current !== null && total !== null) {
+                    return {
+                        current,
+                        total
+                    };
+                }
+                return null;
             }
-            if (!seenSrcs.has(img.src)) {
+
+            function updateCachedPage() {
+                const data = getFooterPageNumbers();
+                if (data) cachedPage = data.current;
+                return cachedPage;
+            }
+            const getCurrentPageNumber = () => cachedPage ?? updateCachedPage();
+            const getTotalPages = () =>
+                getFooterPageNumbers()?.total ?? getTotalPageCount();
+
+            function dispatchArrowKey(key) {
+                document.dispatchEvent(
+                    new KeyboardEvent('keydown', {
+                        key,
+                        code: key,
+                        bubbles: true,
+                        cancelable: true
+                    })
+                );
+            }
+
+            function getActiveSpread() {
+                const spreads = document.querySelectorAll(spreadSelector);
+                for (const s of spreads) {
+                    const r = s.style.right;
+                    if (r === '0%' || r === '0px' || r === '') return s;
+                }
+                return spreads[0] || null;
+            }
+
+            function getActiveImage(spreadEl) {
+                return spreadEl?.querySelector('img[src^="blob:"]') || null;
+            }
+
+            function waitForPageChange(prev, timeout = 3000) {
+                return new Promise(resolve => {
+                    const start = performance.now();
+
+                    function tick() {
+                        if (session.cancelled) return resolve(false);
+                        const current = updateCachedPage();
+                        if (current !== null && current !== prev) {
+                            return resolve(true);
+                        }
+                        if (performance.now() - start > timeout) {
+                            return resolve(false);
+                        }
+                        requestAnimationFrame(tick);
+                    }
+                    tick();
+                });
+            }
+
+            function waitForImage(spreadEl, timeout = 3000) {
+                return new Promise(resolve => {
+                    const start = performance.now();
+
+                    function tick() {
+                        const img = getActiveImage(spreadEl);
+                        if (
+                            img &&
+                            img.src.startsWith('blob:') &&
+                            img.complete &&
+                            img.naturalWidth > 0
+                        ) {
+                            return resolve(img);
+                        }
+                        if (performance.now() - start > timeout) {
+                            return resolve(null);
+                        }
+                        requestAnimationFrame(tick);
+                    }
+                    tick();
+                });
+            }
+            const wrapper = document.querySelector(wrapperSelector);
+            if (!wrapper || session.cancelled) return new Map();
+            const total = getTotalPages();
+            const result = new Array(total);
+            const seenSrcs = new Set();
+            for (const [index, img] of existing.entries()) {
+                result[index - 1] = img;
                 seenSrcs.add(img.src);
-                result[pageNum - 1] = img;
-                onProgress(seenSrcs.size);
             }
-            if (pageNum >= total) break;
-            const prev = getCurrentPageNumber();
-            dispatchArrowKey('ArrowLeft');
-            await waitForPageChange(prev, 3000);
-        }
-        const map = new Map();
-        result.forEach((img, i) => {
-            if (img) map.set(i + 1, img);
-        });
-        return map;
-    }
-
-    function getOrderedBlobPageList(blobMap) {
-        return [...blobMap.entries()]
-            .sort(([a], [b]) => a - b)
-            .map(([, img]) => img);
-    }
-
-    async function convertBlobImage(img, mimeType = 'image/png', quality = undefined) {
-        if (img.decode) {
-            try {
-                await img.decode();
-            } catch {}
-        } else if (!img.complete) {
-            await new Promise(resolve => {
-                img.onload = resolve;
-                img.onerror = resolve;
+            updateCachedPage();
+            let guard = 0;
+            while (guard < total + 5 && !session.cancelled) {
+                const current = getCurrentPageNumber();
+                if (current === 1) break;
+                dispatchArrowKey('ArrowRight');
+                await waitForPageChange(current, 1500);
+                guard++;
+            }
+            await new Promise(r => setTimeout(r, 300));
+            for (let pageNum = 1; pageNum <= total; pageNum++) {
+                if (session.cancelled) break;
+                if (result[pageNum - 1]) continue;
+                let spreadEl = getActiveSpread();
+                let img = null;
+                const MAX_RETRIES = 4;
+                for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+                    const pageStarted = performance.now();
+                    img = await waitForImage(spreadEl, 3000);
+                    logCollection('PAGE', {
+                        method: 'blob-horizontal-hydration',
+                        phase: attempt === 0 ? 'initial' : 'retry',
+                        index: pageNum,
+                        outcome: session.cancelled ? 'cancelled' : img ? 'hydrated' : 'timeout',
+                        startedAt: pageStarted,
+                        attempt: attempt + 1,
+                        maxAttempts: MAX_RETRIES,
+                        waitBudgetMs: 3000
+                    });
+                    if (img) break;
+                    await new Promise(r => setTimeout(r, 250));
+                    spreadEl = getActiveSpread();
+                }
+                logCollection('PAGE ATTEMPTS END', {
+                    method: 'blob-horizontal-hydration',
+                    index: pageNum,
+                    stopReason: session.cancelled ? 'cancelled' : img ? 'complete' : 'attempt-limit',
+                    maxAttempts: MAX_RETRIES
+                });
+                if (!img) {
+                    logCollection('PAGE FAILED', {
+                        method: 'blob-horizontal-hydration',
+                        index: pageNum
+                    }, 'warn');
+                    continue;
+                }
+                if (!seenSrcs.has(img.src)) {
+                    seenSrcs.add(img.src);
+                    result[pageNum - 1] = img;
+                    onProgress(seenSrcs.size);
+                }
+                if (pageNum >= total) break;
+                const prev = getCurrentPageNumber();
+                dispatchArrowKey('ArrowLeft');
+                await waitForPageChange(prev, 3000);
+            }
+            const map = new Map();
+            result.forEach((img, i) => {
+                if (img) map.set(i + 1, img);
             });
+            return map;
         }
-        const canvas = document.createElement("canvas");
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0);
-        return new Promise(resolve => {
-            canvas.toBlob(async blob => {
-                const buf = await blob.arrayBuffer();
-                resolve(new Uint8Array(buf));
-            }, mimeType, quality);
-        });
-    }
 
-    async function buildBlobImageFiles(session, images, onProgress, useSmallFileSize = false) {
-        const files = {};
-        const total = images.length;
-        onProgress(0, total);
-        const workerCount = getOptimalWorkerCount();
-        let completed = 0;
-        const mimeType = useSmallFileSize ? 'image/webp' : 'image/png';
-        const ext = useSmallFileSize ? 'webp' : 'png';
-        const jobs = images.map((img, index) => ({
-            img,
-            index
-        }));
-        const results = await taskQueue(
-            workerCount,
-            jobs,
-            async ({
+        function getOrderedBlobPageList(blobMap) {
+            return [...blobMap.entries()]
+                .sort(([a], [b]) => a - b)
+                .map(([, img]) => img);
+        }
+
+        async function buildBlobImageFiles(session, images, onProgress, useSmallFileSize = false, usePDF = false) {
+            async function convertBlobImage(img, mimeType = 'image/png', quality = undefined) {
+                if (img.decode) {
+                    try {
+                        await img.decode();
+                    } catch {}
+                } else if (!img.complete) {
+                    await new Promise(resolve => {
+                        img.onload = resolve;
+                        img.onerror = resolve;
+                    });
+                }
+                const canvas = document.createElement("canvas");
+                canvas.width = img.naturalWidth;
+                canvas.height = img.naturalHeight;
+                const ctx = canvas.getContext("2d");
+                if (mimeType === 'image/jpeg') {
+                    ctx.fillStyle = '#FFF';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                }
+                ctx.drawImage(img, 0, 0);
+                return new Promise((resolve, reject) => {
+                    canvas.toBlob(blob => {
+                        if (!blob) return reject(new Error(DOWNLOAD_ERROR_MAP.JPEG_CONVERSION_FAILED.code));
+                        blob.arrayBuffer().then(buf => resolve(new Uint8Array(buf)), reject);
+                    }, mimeType, quality);
+                });
+            }
+
+            const files = {};
+            const total = images.length;
+            onProgress(0, total);
+            const workerCount = getOptimalWorkerCount();
+            let completed = 0;
+            const mimeType = usePDF ? 'image/jpeg' : useSmallFileSize ? 'image/webp' : 'image/png';
+            const ext = usePDF ? 'jpg' : useSmallFileSize ? 'webp' : 'png';
+            const jobs = images.map((img, index) => ({
                 img,
                 index
-            }) => {
-                if (session.cancelled) return null;
-                const imgData = await convertBlobImage(img, mimeType);
-                if (session.cancelled) return null;
-                completed++;
-                onProgress(completed, total);
-                return {
-                    name: generateImageFileName(index + 1, total, ext),
-                    data: imgData
-                };
+            }));
+            const results = await taskQueue(
+                workerCount,
+                jobs,
+                async ({
+                    img,
+                    index
+                }) => {
+                    if (session.cancelled) return null;
+                    const imgData = await convertBlobImage(img, mimeType, usePDF ? 0.92 : undefined);
+                    if (session.cancelled) return null;
+                    completed++;
+                    onProgress(completed, total);
+                    return {
+                        name: generateImageFileName(index + 1, total, ext),
+                        data: imgData
+                    };
+                }
+            );
+            for (const r of results) {
+                if (r) {
+                    files[r.name] = r.data;
+                }
             }
-        );
-        for (const r of results) {
-            if (r) {
-                files[r.name] = r.data;
-            }
+            return files;
         }
-        return files;
+        return {
+            normal: collectNormalBlobImages,
+            horizontal: {
+                jp: collectJpBlobImages
+            },
+            init: initBlobBackgroundCollector,
+            buildFiles: buildBlobImageFiles
+        };
+    }
+
+    async function downloadChapterPDF(session, files, series, chapter, setLabel, oneImagePerPage = false) {
+        const checkCancelled = () => {
+            if (session.cancelled) throwDownloadError('DOWNLOAD_ABORTED');
+        };
+        checkCancelled();
+        if (!files || !Object.keys(files).length) throwDownloadError('NO_IMAGES_COLLECTED');
+        try {
+            setLabel(UI_BUTTON_LABELS.FINISHING);
+            const pdf = await PDFLib.PDFDocument.create();
+            const images = [];
+            const widths = new Map();
+            const entries = Object.entries(files).sort(([a], [b]) => parseInt(a, 10) - parseInt(b, 10));
+            for (let i = 0; i < entries.length; i++) {
+                checkCancelled();
+                const image = await pdf.embedJpg(entries[i][1]);
+                images.push(image);
+                widths.set(image.width, (widths.get(image.width) || 0) + 1);
+                await new Promise(r => setTimeout(r, 0));
+            }
+            if (oneImagePerPage) {
+                for (const image of images) {
+                    checkCancelled();
+                    const scale = Math.min(0.75, 14400 / image.width, 14400 / image.height);
+                    const width = image.width * scale;
+                    const height = image.height * scale;
+                    const page = pdf.addPage([width, height]);
+                    page.drawImage(image, {
+                        x: 0,
+                        y: 0,
+                        width,
+                        height
+                    });
+                    await new Promise(r => setTimeout(r, 0));
+                }
+            } else {
+                const commonWidth = [...widths].sort((a, b) => b[1] - a[1])[0][0];
+                const pageWidth = Math.min(commonWidth * 0.75, 14400);
+                const maxHeight = 14400;
+                const heights = images.map(image => image.height * pageWidth / image.width);
+                let remaining = heights.reduce((sum, height) => sum + height, 0);
+                let page = null;
+                let pageHeight = 0;
+                let used = 0;
+                for (let i = 0; i < images.length; i++) {
+                    checkCancelled();
+                    const height = heights[i];
+                    let consumed = 0;
+                    while (consumed < height - 0.000001) {
+                        checkCancelled();
+                        if (!page || used >= pageHeight - 0.000001) {
+                            pageHeight = Math.min(maxHeight, remaining);
+                            page = pdf.addPage([pageWidth, pageHeight]);
+                            used = 0;
+                        }
+                        page.drawImage(images[i], {
+                            x: 0,
+                            y: pageHeight - used - height + consumed,
+                            width: pageWidth,
+                            height
+                        });
+                        const visible = Math.min(height - consumed, pageHeight - used);
+                        consumed += visible;
+                        used += visible;
+                        remaining = Math.max(0, remaining - visible);
+                    }
+                    await new Promise(r => setTimeout(r, 0));
+                }
+            }
+            checkCancelled();
+            const bytes = await pdf.save();
+            checkCancelled();
+            const url = URL.createObjectURL(new Blob([bytes], {
+                type: 'application/pdf'
+            }));
+            try {
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `${series} - ${chapter}.pdf`;
+                link.click();
+            } finally {
+                setTimeout(() => URL.revokeObjectURL(url), 60000);
+            }
+        } catch (error) {
+            if (session.cancelled) throwDownloadError('DOWNLOAD_ABORTED');
+            console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION}: PDF CREATION ERROR\n`, error);
+            throwDownloadError('PDF_CREATION_FAILED');
+        }
     }
 
     function createStreamingZip(series, chapter) {
@@ -3292,6 +3574,40 @@
     }
 
     async function executeDiagnosticPipeline(mainBtn, diagBtn) {
+        function getDiagnosticSelectors() {
+            function getElementSelector(element) {
+                if (!element) return 'NOT FOUND';
+                const parts = [];
+                while (element && element.nodeType === 1) {
+                    if (element.id) {
+                        parts.unshift('#' + CSS.escape(element.id));
+                        break;
+                    }
+                    const tagName = element.tagName;
+                    let part = tagName.toLowerCase();
+                    const parent = element.parentElement;
+                    if (parent) {
+                        const siblings = [...parent.children].filter(child => child.tagName === tagName);
+                        if (siblings.length > 1) part += ':nth-of-type(' + (siblings.indexOf(element) + 1) + ')';
+                    }
+                    parts.unshift(part);
+                    element = parent;
+                }
+                return parts.join(' > ');
+            }
+            const viewer = getViewerContainer();
+            const horizontal = getHorizontalViewerType();
+            let render;
+            if (horizontal === 'jp') render = document.querySelector(RENDER_PAGE_SELECTORS_HORIZONTAL.jp.spread);
+            else {
+                const selector = RENDER_PAGE_SELECTORS.find(value => document.querySelector(value));
+                render = selector ? document.querySelector(selector) : null;
+            }
+            return {
+                render: getElementSelector(render),
+                viewer: getElementSelector(viewer)
+            };
+        }
         if (state.ui.isDownloading) return;
         const previousOverflow = document.body.style.overflow;
         let session = null;
@@ -3333,7 +3649,6 @@
                 });
                 return [...domains].sort();
             };
-            let viewerContainerMatched = 'NOT FOUND';
             let totalPageCount = 'N/A';
             let missingAfterScroll = [];
             let didFail = false;
@@ -3349,29 +3664,10 @@
                 await new Promise(r => setTimeout(r, 300));
                 state.viewer.initialRenderingLogged = false;
                 const renderType = resolveRenderType();
-                if (renderType === 'webp') {
-                    const result = isHorizontalViewerLayout() === 'kr' ? {
-                            images: await collectHorizontalWebpPages(session, () => {}),
-                            switchTo: null
-                        } :
-                        await collectWebpPages(session, () => {});
-                    if (!result.switchTo) {
-                        await retryMissingPages(session, state.ui.images, () => {});
-                        missingAfterScroll = findMissingPages(state.ui.images);
-                    }
-                } else if (renderType === 'canvas') {
-                    await collectCanvasPages(session, () => {});
-                    missingAfterScroll = findMissingPages(state.canvas.pages);
-                } else if (renderType === 'blob') {
-                    if (isHorizontalViewerLayout() === 'jp') {
-                        const collected = await collectHorizontalBlobPages(session, () => {}, new Map(state.blob.pages));
-                        missingAfterScroll = findMissingPages(collected);
-                    } else {
-                        await collectBlobPages(session, () => {});
-                        missingAfterScroll = findMissingPages(state.blob.pages);
-                    }
-                }
-                viewerContainerMatched = VIEWER_CONTAINER_SELECTORS.find(s => document.querySelector(s)) || 'NOT FOUND';
+                const collected = await collectChapterImages(session, renderType, () => {});
+                const pageMap = collected.renderType === 'canvas' ? state.canvas.pages :
+                    collected.renderType === 'blob' ? state.blob.pages : state.ui.images;
+                missingAfterScroll = findMissingPages(pageMap);
                 try {
                     totalPageCount = String(getTotalPageCount());
                 } catch {}
@@ -3412,6 +3708,7 @@
             state.diagnostics.active = false;
             const diagLogs = [...state.diagnostics.consoleHistory];
             const ts = diagStart.toISOString().replace('T', ' ').slice(0, 23);
+            const matchedSelectors = getDiagnosticSelectors();
             const lines = [
                 `--- GENERATED ${ts} ---`,
                 '',
@@ -3423,20 +3720,19 @@
                 '',
                 '-- INITIAL DIAGNOSIS --',
                 '',
-                `RENDER_PAGE_SELECTORS: { ${RENDER_PAGE_SELECTORS.find(selector =>
-                    document.querySelector(selector)
-                ) || 'NOT FOUND'} }`,
-                `VIEWER_PAGE_SELECTORS: { ${viewerContainerMatched} }`,
+                `RENDER_PAGE_SELECTORS: { ${matchedSelectors.render} }`,
+                `VIEWER_PAGE_SELECTORS: { ${matchedSelectors.viewer} }`,
                 '',
                 `TOTAL_PAGE_COUNT: { ${totalPageCount} }`,
                 `SERIES_TITLE: { ${getSeriesTitle()} }`,
                 `SERIES_CHAPTER: { ${getSeriesChapter()} }`,
                 `RENDER_TYPE: ${(state.viewer.type || 'NULL').toUpperCase()}`,
+                `SAVE_AS_PDF: ${boolStr(localStorage.getItem(STORAGE_KEY_SAVE_AS_PDF) === 'true')}`,
                 `SMALL_FILE_SIZE: ${boolStr(localStorage.getItem(STORAGE_KEY_SMALL_FILE_SIZE) === 'true')}`,
                 '',
                 `IS_CHAPTER_PAGE: ${boolStr(isChapterPage())}`,
                 `IS_ALTERNATE_LAYOUT: ${boolStr(isAlternateViewerLayout())}`,
-                `IS_HORIZONTAL_LAYOUT: ${isHorizontalViewerLayout() || 'FALSE'}`,
+                `IS_HORIZONTAL_LAYOUT: ${boolStr(isHorizontalViewerLayout())}`,
                 `IS_MOBILE_DEVICE: ${boolStr(IS_MOBILE_DEVICE)}`,
                 `HAS_PURCHASE_MODAL: ${boolStr(hasPurchaseModal())}`,
                 `FOOTER_ELEMENT_PRESENT: ${boolStr(!!document.querySelector(UI_PAGE_SELECTORS.footer))}`,
@@ -3501,25 +3797,38 @@
         } catch (error) {
             try {
                 handleDownloadError(error);
-            } catch (reportError) {
-            }
+            } catch (reportError) {}
         } finally {
             const cleanup = action => {
-                try { action(); } catch (cleanupError) {}
+                try {
+                    action();
+                } catch (cleanupError) {}
             };
-            cleanup(() => { if (session) session.cancel(); });
+            cleanup(() => {
+                if (session) session.cancel();
+            });
             state.diagnostics.active = false;
             state.canvas.enabled = false;
             state.blob.enabled = false;
             state.ui.phase = 'idle';
             state.ui.isDownloading = false;
             if (state.ui.activeDownload === session) state.ui.activeDownload = null;
-            cleanup(() => { document.body.style.overflow = previousOverflow; });
-            cleanup(() => { document.body.classList.remove('lock-site-ui'); });
+            cleanup(() => {
+                document.body.style.overflow = previousOverflow;
+            });
+            cleanup(() => {
+                document.body.classList.remove('lock-site-ui');
+            });
             cleanup(() => hideDimOverlay());
-            cleanup(() => { mainBtn.disabled = false; });
-            cleanup(() => { diagBtn.disabled = false; });
-            cleanup(() => { mainBtn.textContent = UI_BUTTON_LABELS.DEFAULT; });
+            cleanup(() => {
+                mainBtn.disabled = false;
+            });
+            cleanup(() => {
+                diagBtn.disabled = false;
+            });
+            cleanup(() => {
+                mainBtn.textContent = UI_BUTTON_LABELS.DEFAULT;
+            });
             cleanup(() => {
                 diagBtn.textContent = completed ? UI_BUTTON_LABELS.COMPLETE : UI_BUTTON_LABELS.DIAG_DEFAULT;
             });
@@ -3530,7 +3839,12 @@
         if (state.ui.isDownloading) return;
         const renderType = resolveRenderType();
         if (!renderType) return;
-        const useSmallFileSize = localStorage.getItem(STORAGE_KEY_SMALL_FILE_SIZE) === 'true';
+        const usePDF = localStorage.getItem(STORAGE_KEY_SAVE_AS_PDF) === 'true';
+        const oneImagePerPage = usePDF && isHorizontalViewerLayout();
+        const useSmallFileSize = !usePDF && localStorage.getItem(STORAGE_KEY_SMALL_FILE_SIZE) === 'true';
+        console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - DOWNLOAD SETTINGS: ` +
+            `PDF: ${usePDF ? 'TRUE' : 'FALSE'} | ` +
+            `SMALL FILE SIZE: ${useSmallFileSize ? 'TRUE' : 'FALSE'}`);
         state.ui.isDownloading = true;
         state.ui.phase = 'collecting';
         const session = startDownloadSession();
@@ -3561,226 +3875,45 @@
             lockPageInteraction();
             scrollToTop();
             await new Promise(r => setTimeout(r, 300));
-            let files = null;
-            if (renderType === 'webp') {
-                const result = isHorizontalViewerLayout() === 'kr' ? {
-                        images: await collectHorizontalWebpPages(session, onCollect),
-                        switchTo: null
-                    } :
-                    await collectWebpPages(session, onCollect);
-                if (result.switchTo === 'canvas') {
-                    state.canvas.pages = new Map(state.canvas.buffer);
-                    state.canvas.buffer.clear();
-                    state.canvas.enabled = true;
-                    const cuts = getIndexedComicCuts();
-                    const total = cuts.length;
-                    for (const cut of cuts) {
-                        if (session.cancelled) break;
-                        const pageStarted = performance.now();
-                        const index = Number(cut.dataset.cutIndex);
-                        const precollected = state.canvas.pages.has(index);
-                        scrollToComicPage(index, {
-                            instant: true
-                        });
-                        await new Promise(r => setTimeout(r, 300));
-                        logCollection('PAGE', {
-                            method: 'canvas-scroll',
-                            phase: 'initial',
-                            index,
-                            outcome: session.cancelled ? 'cancelled' : precollected ? 'already-collected' : state.canvas.pages.has(index) ? 'collected' : 'still-missing',
-                            startedAt: pageStarted,
-                            waitBudgetMs: 300
-                        });
-                        onCollect(state.canvas.pages.size, total);
-                    }
-                    state.canvas.enabled = false;
-                    await retryMissingPages(session, state.canvas.pages, onCollect, {
-                        beforeAttempt: async () => {
-                            state.canvas.enabled = true;
-                        },
-                        afterAttempt: async () => {
-                            state.canvas.enabled = false;
-                        },
-                        idleWait: true,
-                        nudgeScroll: true
-                    });
-                    const canvasPages = [...state.canvas.pages.values()]
-                        .filter(p => p.ops.length)
-                        .sort((a, b) => a.pageIndex - b.pageIndex);
-                    const validCanvasPages = validateCollectedImages(session, canvasPages);
-                    state.ui.phase = 'downloading';
+            const collected = await collectChapterImages(session, renderType, onCollect);
+            const images = validateCollectedImages(session, collected.images);
+            state.ui.phase = 'downloading';
+            if (collected.renderType === 'canvas' && !usePDF) {
+                const {
+                    zip,
+                    donePromise
+                } = createZipInstance();
+                const success = await RENDER_METHODS.canvas.streamZip(session, images, zip, onConvert, useSmallFileSize);
+                if (!success) throwDownloadError('DOWNLOAD_ABORTED');
+                await finalizeZip(zip, donePromise);
+            } else {
+                const files = collected.renderType === 'canvas' ?
+                    await RENDER_METHODS.canvas.buildPDFFiles(session, images, onConvert) :
+                    collected.renderType === 'blob' ?
+                    await RENDER_METHODS.blob.buildFiles(session, images, onConvert, useSmallFileSize, usePDF) :
+                    await RENDER_METHODS.webp.buildFiles(session, images, onConvert, useSmallFileSize);
+                if (usePDF) {
+                    await downloadChapterPDF(session, files, getSeriesTitle(), getSeriesChapter(), setLabel, oneImagePerPage);
+                } else {
+                    if (session.cancelled) throwDownloadError('DOWNLOAD_ABORTED');
+                    if (!files || !Object.keys(files).length) throwDownloadError('NO_IMAGES_COLLECTED');
                     const {
-                        zip: cZip,
-                        donePromise: cDone
-                    } = createZipInstance();
-                    const success = await streamCanvasImagesToZip(session, validCanvasPages, cZip, onConvert, useSmallFileSize);
-                    if (!success) throwDownloadError('DOWNLOAD_ABORTED');
-                    await finalizeZip(cZip, cDone);
-                    completed = true;
-                } else if (result.switchTo === 'blob') {
-                    state.blob.enabled = true;
-                    await collectBlobPages(session, onCollect);
-                    state.blob.enabled = false;
-                    const orderedBlobImages = validateCollectedImages(session, getOrderedBlobPageList(state.blob.pages));
-                    state.ui.phase = 'downloading';
-                    files = await buildBlobImageFiles(session, orderedBlobImages, onConvert, useSmallFileSize);
-                } else {
-                    const images = result.images;
-                    validateCollectedImages(session, images);
-                    await retryMissingPages(session, state.ui.images, onCollect);
-                    const finalImages = validateCollectedImages(session, getOrderedWebpPageList());
-                    state.ui.phase = 'downloading';
-                    if (useSmallFileSize) {
-                        files = {};
-                        const total = finalImages.length;
-                        let completedWebp = 0;
-                        onConvert(0, total);
-                        const workerCount = getOptimalWorkerCount();
-                        const jobs = finalImages.map((url, index) => ({
-                            url,
-                            index
-                        }));
-                        const results = await taskQueue(workerCount, jobs, async ({
-                            url,
-                            index
-                        }) => {
-                            if (session.cancelled) return null;
-                            const data = await getImageData(url);
-                            if (session.cancelled) return null;
-                            completedWebp++;
-                            onConvert(completedWebp, total);
-                            return {
-                                name: generateImageFileName(index + 1, total, 'webp'),
-                                data
-                            };
-                        });
-                        for (const r of results) {
-                            if (r) files[r.name] = r.data;
-                        }
-                    } else {
-                        files = await convertWebpPagesToJpeg(session, finalImages, onConvert);
-                    }
-                }
-            }
-            if (renderType === 'canvas') {
-                const pages = await collectCanvasPages(
-                    session,
-                    onCollect
-                );
-                const validPages = validateCollectedImages(
-                    session,
-                    pages
-                );
-                state.ui.phase = 'downloading';
-                const {
-                    zip,
-                    donePromise
-                } =
-                createZipInstance();
-                const success =
-                    await streamCanvasImagesToZip(
-                        session,
-                        validPages,
                         zip,
-                        onConvert,
-                        useSmallFileSize
-                    );
-                if (!success) {
-                    throwDownloadError('DOWNLOAD_ABORTED');
-                }
-                await finalizeZip(zip, donePromise);
-            }
-            if (renderType === 'blob') {
-                if (isHorizontalViewerLayout() === 'jp') {
-                    const preloaded = new Map(state.blob.pages);
-                    const collected = await collectHorizontalBlobPages(
-                        session,
-                        onCollect,
-                        preloaded
-                    );
-                    for (const [index, img] of collected.entries()) {
-                        preloaded.set(index, img);
-                    }
-                    const orderedImages = validateCollectedImages(
-                        session,
-                        getOrderedBlobPageList(preloaded)
-                    );
-                    state.ui.phase = 'downloading';
-                    files = await buildBlobImageFiles(
-                        session,
-                        orderedImages,
-                        onConvert,
-                        useSmallFileSize
-                    );
-                } else {
-                    const layout = getViewerLayoutConfig();
-                    const expectedCount =
-                        layout.pageSource === 'cuts' ?
-                        getAllPageIndexes().length :
-                        getTotalPageCount();
-                    if (state.blob.pages.size !== expectedCount) {
-                        state.blob.pages.clear();
-                        for (const [index, data] of state.blob.buffer) {
-                            const blob = new Blob([data], {
-                                type: 'image/png'
-                            });
-                            const url =
-                                URL.createObjectURL(blob);
-                            const img = new Image();
-                            img.src = url;
-                            state.blob.pages.set(index, img);
-                        }
-                        state.blob.enabled = true;
-                        state.blob.buffer.clear();
-                        await collectBlobPages(
-                            session,
-                            onCollect
-                        );
-                    }
-                    const orderedImages =
-                        validateCollectedImages(
-                            session,
-                            getOrderedBlobPageList(
-                                state.blob.pages
-                            )
-                        );
-                    state.ui.phase = 'downloading';
-                    files = await buildBlobImageFiles(
-                        session,
-                        orderedImages,
-                        onConvert,
-                        useSmallFileSize
-                    );
-                }
-            }
-            if (!completed && renderType !== 'canvas') {
-                if (session.cancelled || !files) {
-                    throwDownloadError('DOWNLOAD_ABORTED');
-                }
-                if (!Object.keys(files).length) {
-                    throwDownloadError('NO_IMAGES_COLLECTED');
-                }
-                const {
-                    zip,
-                    donePromise
-                } =
-                createZipInstance();
-                const entries = Object.entries(files);
-                let completedCount = 0;
-                const total = entries.length;
-                for (const [name, data] of entries) {
-                    if (session.cancelled) break;
-                    const file = new fflate.ZipDeflate(
-                        name, {
+                        donePromise
+                    } = createZipInstance();
+                    const entries = Object.entries(files);
+                    let completedCount = 0;
+                    for (const [name, data] of entries) {
+                        if (session.cancelled) throwDownloadError('DOWNLOAD_ABORTED');
+                        const file = new fflate.ZipDeflate(name, {
                             level: 6
-                        }
-                    );
-                    zip.add(file);
-                    file.push(data, true);
-                    completedCount++;
-                    onConvert(completedCount, total);
+                        });
+                        zip.add(file);
+                        file.push(data, true);
+                        onConvert(++completedCount, entries.length);
+                    }
+                    await finalizeZip(zip, donePromise);
                 }
-                await finalizeZip(zip, donePromise);
             }
             setLabel(UI_BUTTON_LABELS.COMPLETE);
             resetDownloadButton(btn);
@@ -4032,7 +4165,7 @@
             );
             return;
         }
-        console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION}: DOWNLOAD ERROR OCCURRED, SEE CONSOLE BELOW\n`, error);
+        console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - DOWNLOAD ERROR OCCURRED, SEE CONSOLE BELOW\n`, error);
         showErrorMessage(
             DOWNLOAD_ERROR_MAP.UNKNOWN_ERROR.message,
             DOWNLOAD_ERROR_MAP.UNKNOWN_ERROR.severity
