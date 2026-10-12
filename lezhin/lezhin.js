@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      3.0.0
+// @version      3.0.1
 // @description  Downloads and saves Lezhin chapter images to a PDF or ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
@@ -161,7 +161,7 @@
         },
         IMAGE_ACCESS_DENIED: {
             code: 'image-access-denied',
-            message: 'Image access expired (refresh the page)',
+            message: 'Image access expired',
             severity: 'important'
         },
         IMAGE_COUNT_MISMATCH: {
@@ -174,9 +174,19 @@
             message: 'Failed image request due to network',
             severity: 'normal'
         },
+        LOSSLESS_WEBP_FAILED: {
+            code: 'lossless-webp-failed',
+            message: 'Failed to create lossless WebP',
+            severity: 'important'
+        },
+        PNG_CONVERSION_FAILED: {
+            code: 'png-conversion-failed',
+            message: 'Failed to convert images to PNG',
+            severity: 'normal'
+        },
         JPEG_CONVERSION_FAILED: {
             code: 'jpeg-conversion-failed',
-            message: 'Failed to convert JPEG images',
+            message: 'Failed to convert images for PDF',
             severity: 'normal'
         },
         MOBILE_DEVICES_NOT_SUPPORTED: {
@@ -666,8 +676,12 @@
             .download-button, .download-button *, .download-popup, .download-popup *, .lezhin-toast, .lezhin-toast * {
                 user-select: none !important;
             }
-            .download-popup-setting-row.setting-disabled { opacity: 0.45; }
-            .switch input:disabled ~ span { cursor: not-allowed; }
+            .download-popup-setting-row.setting-disabled {
+                opacity: 0.45;
+            }
+            .switch input:disabled ~ span {
+                cursor: not-allowed;
+            }
             .lezhin-dim-overlay {
                 position: fixed;
                 inset: 0;
@@ -829,7 +843,7 @@
         const chapterViewerRegex =
             /^\/comic\/[^\/]+\/(?:chapter|volume)\/[a-zA-Z0-9_-]+\/viewer\/?$/;
         const libraryViewerRegex =
-            /^\/[a-z]{2}\/library\/comic\/[a-z]{2}-[A-Z]{2}\/[^\/]+\/\d+\/?$/;
+            /^\/[a-z]{2}\/library\/comic\/[a-z]{2}-[A-Z]{2}\/[^\/]+\/[a-zA-Z0-9_-]+\/?$/;
         return (
             /^\/(?:[a-z]{2}\/)?comic\/[^\/]+\/[^\/]+\/?$/.test(url) ||
             chapterViewerRegex.test(url) ||
@@ -1300,7 +1314,7 @@
             await wait(300);
             modal.querySelector('button[class*="absolute"]')?.click();
         } catch (e) {
-            console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION}: ERROR SETTING SINGLE PAGE LAYOUT\n`, e);
+            console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ERROR SETTING SINGLE PAGE LAYOUT\n`, e);
         }
     }
 
@@ -2187,8 +2201,12 @@
                 .map(([, url]) => url);
         }
 
-        async function buildWebpImageFiles(session, images, onProgress, useSmallFileSize) {
-            async function convertWebpPagesToJpeg(session, urls, onProgress) {
+        async function buildWebpImageFiles(session, images, onProgress, useSmallFileSize, usePDF = false) {
+            const mimeType = usePDF ? 'image/jpeg' : 'image/png';
+            const extension = usePDF ? 'jpg' : 'png';
+            const conversionError = usePDF ? 'JPEG_CONVERSION_FAILED' : 'PNG_CONVERSION_FAILED';
+            const quality = usePDF ? 0.92 : undefined;
+            async function convertWebpPages(session, urls, onProgress) {
                 const files = {};
                 const total = urls.length;
                 let completed = 0;
@@ -2199,7 +2217,7 @@
                     OffscreenCanvas.prototype.convertToBlob &&
                     typeof createImageBitmap === 'function';
                 const idleYield = () => new Promise(r => requestAnimationFrame(r));
-                async function convertWebpToJpeg(webpBytes, quality = 0.92) {
+                async function convertWebpImage(webpBytes) {
                     if (CAN_USE_OFFSCREEN) {
                         const blob = new Blob([webpBytes], {
                             type: 'image/webp'
@@ -2207,17 +2225,19 @@
                         const bitmap = await createImageBitmap(blob);
                         const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
                         const ctx = canvas.getContext('2d', {
-                            alpha: false
+                            alpha: !usePDF
                         });
-                        ctx.fillStyle = '#FFF';
-                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        if (usePDF) {
+                            ctx.fillStyle = '#FFF';
+                            ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        }
                         ctx.drawImage(bitmap, 0, 0);
                         bitmap.close();
-                        const jpegBlob = await canvas.convertToBlob({
-                            type: 'image/jpeg',
+                        const encodedBlob = await canvas.convertToBlob({
+                            type: mimeType,
                             quality
                         });
-                        return new Uint8Array(await jpegBlob.arrayBuffer());
+                        return new Uint8Array(await encodedBlob.arrayBuffer());
                     }
                     return new Promise((resolve, reject) => {
                         const blob = new Blob([webpBytes], {
@@ -2231,29 +2251,29 @@
                             canvas.width = img.naturalWidth;
                             canvas.height = img.naturalHeight;
                             const ctx = canvas.getContext('2d');
-                            ctx.fillStyle = '#FFF';
-                            ctx.fillRect(0, 0, canvas.width, canvas.height);
+                            if (usePDF) {
+                                ctx.fillStyle = '#FFF';
+                                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                            }
                             ctx.drawImage(img, 0, 0);
-                            canvas.toBlob(async jpegBlob => {
-                                if (!jpegBlob) {
+                            canvas.toBlob(encodedBlob => {
+                                if (!encodedBlob) {
                                     return reject(
                                         new Error(
-                                            DOWNLOAD_ERROR_MAP.JPEG_CONVERSION_FAILED.code
+                                            DOWNLOAD_ERROR_MAP[conversionError].code
                                         )
                                     );
                                 }
-                                resolve(
-                                    new Uint8Array(
-                                        await jpegBlob.arrayBuffer()
-                                    )
+                                encodedBlob.arrayBuffer().then(
+                                    buffer => resolve(new Uint8Array(buffer)), reject
                                 );
-                            }, 'image/jpeg', quality);
+                            }, mimeType, quality);
                         };
                         img.onerror = () => {
                             URL.revokeObjectURL(url);
                             reject(
                                 new Error(
-                                    DOWNLOAD_ERROR_MAP.JPEG_CONVERSION_FAILED.code
+                                    DOWNLOAD_ERROR_MAP[conversionError].code
                                 )
                             );
                         };
@@ -2271,16 +2291,16 @@
                     if (session.cancelled) return null;
                     const webp = await getImageData(url);
                     if (session.cancelled) return null;
-                    const jpeg = await convertWebpToJpeg(webp).catch(() => {
-                        throwDownloadError('JPEG_CONVERSION_FAILED');
+                    const encoded = await convertWebpImage(webp).catch(() => {
+                        throwDownloadError(conversionError);
                     });
                     if (session.cancelled) return null;
                     completed++;
                     onProgress(completed, total);
                     if (completed % 2 === 0) await idleYield();
                     return {
-                        name: generateImageFileName(index + 1, total, 'jpg'),
-                        data: jpeg
+                        name: generateImageFileName(index + 1, total, extension),
+                        data: encoded
                     };
                 });
                 for (const r of results) {
@@ -2289,7 +2309,7 @@
                 return files;
             }
 
-            if (!useSmallFileSize) return convertWebpPagesToJpeg(session, images, onProgress);
+            if (usePDF || !useSmallFileSize) return convertWebpPages(session, images, onProgress);
             const files = {};
             const total = images.length;
             let completedWebp = 0;
@@ -2520,12 +2540,7 @@
                     op.dx, op.dy, op.dw, op.dh
                 );
             });
-            return new Promise((resolve, reject) => {
-                canvas.toBlob(blob => {
-                    if (!blob) return reject(new Error(DOWNLOAD_ERROR_MAP.JPEG_CONVERSION_FAILED.code));
-                    blob.arrayBuffer().then(buf => resolve(new Uint8Array(buf)), reject);
-                }, mimeType, quality);
-            });
+            return encodeCanvasImage(canvas, mimeType, quality);
         }
 
         async function streamCanvasImagesToZip(session, pages, zip, onProgress, useSmallFileSize = false) {
@@ -3231,12 +3246,7 @@
                     ctx.fillRect(0, 0, canvas.width, canvas.height);
                 }
                 ctx.drawImage(img, 0, 0);
-                return new Promise((resolve, reject) => {
-                    canvas.toBlob(blob => {
-                        if (!blob) return reject(new Error(DOWNLOAD_ERROR_MAP.JPEG_CONVERSION_FAILED.code));
-                        blob.arrayBuffer().then(buf => resolve(new Uint8Array(buf)), reject);
-                    }, mimeType, quality);
-                });
+                return encodeCanvasImage(canvas, mimeType, quality);
             }
 
             const files = {};
@@ -3369,7 +3379,7 @@
             }
         } catch (error) {
             if (session.cancelled) throwDownloadError('DOWNLOAD_ABORTED');
-            console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION}: PDF CREATION ERROR\n`, error);
+            console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - PDF CREATION ERROR\n`, error);
             throwDownloadError('PDF_CREATION_FAILED');
         }
     }
@@ -3384,7 +3394,7 @@
         });
         const zip = new fflate.Zip((err, data, final) => {
             if (err) {
-                console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION}: ZIP STREAMING ERROR\n`, err);
+                console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ZIP STREAMING ERROR\n`, err);
                 rejectFinal(new Error(
                     DOWNLOAD_ERROR_MAP.ZIP_CREATION_FAILED.code
                 ));
@@ -3406,7 +3416,7 @@
                     setTimeout(() => URL.revokeObjectURL(url), 1000);
                     resolveFinal();
                 } catch (e) {
-                    console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION}: ZIP FINALIZING ERROR\n`, e);
+                    console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ZIP FINALIZING ERROR\n`, e);
                     rejectFinal(new Error(
                         DOWNLOAD_ERROR_MAP.ZIP_CREATION_FAILED.code
                     ));
@@ -3442,6 +3452,56 @@
             }
         }
         return Promise.all(results);
+    }
+
+    function isLosslessWebp(bytes) {
+        const tag = offset => String.fromCharCode(...bytes.subarray(offset, offset + 4));
+        if (bytes.length < 12 || tag(0) !== 'RIFF' || tag(8) !== 'WEBP') return false;
+        const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        const end = view.getUint32(4, true) + 8;
+        if (end !== bytes.length) return false;
+        let foundLossless = false;
+        let offset = 12;
+        while (offset + 8 <= end) {
+            const type = tag(offset);
+            const size = view.getUint32(offset + 4, true);
+            const next = offset + 8 + size + (size % 2);
+            if (next > end) return false;
+            if (type === 'VP8 ' || type === 'ANIM' || type === 'ANMF') return false;
+            if (type === 'VP8L') {
+                if (foundLossless || size < 5 || bytes[offset + 8] !== 0x2f) return false;
+                foundLossless = true;
+            }
+            offset = next;
+        }
+        return offset === end && foundLossless;
+    }
+
+    async function encodeCanvasImage(canvas, mimeType, quality) {
+        const wantsWebp = mimeType === 'image/webp';
+        const errorCode = wantsWebp ? DOWNLOAD_ERROR_MAP.LOSSLESS_WEBP_FAILED.code :
+            mimeType === 'image/png' ? DOWNLOAD_ERROR_MAP.PNG_CONVERSION_FAILED.code :
+            DOWNLOAD_ERROR_MAP.JPEG_CONVERSION_FAILED.code;
+        try {
+            const blob = await new Promise((resolve, reject) => {
+                canvas.toBlob(result => {
+                    if (!result) {
+                        reject(new Error(errorCode));
+                        return;
+                    }
+                    resolve(result);
+                }, mimeType, wantsWebp ? 1 : quality);
+            });
+            const bytes = new Uint8Array(await blob.arrayBuffer());
+            if (blob.type !== mimeType || (wantsWebp && !isLosslessWebp(bytes))) {
+                throw new Error(errorCode);
+            }
+            return bytes;
+        } catch (error) {
+            throw new Error(errorCode, {
+                cause: error
+            });
+        }
     }
 
     function getImageData(url) {
@@ -3891,7 +3951,7 @@
                     await RENDER_METHODS.canvas.buildPDFFiles(session, images, onConvert) :
                     collected.renderType === 'blob' ?
                     await RENDER_METHODS.blob.buildFiles(session, images, onConvert, useSmallFileSize, usePDF) :
-                    await RENDER_METHODS.webp.buildFiles(session, images, onConvert, useSmallFileSize);
+                    await RENDER_METHODS.webp.buildFiles(session, images, onConvert, useSmallFileSize, usePDF);
                 if (usePDF) {
                     await downloadChapterPDF(session, files, getSeriesTitle(), getSeriesChapter(), setLabel, oneImagePerPage);
                 } else {
