@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      3.0.1
+// @version      3.1.0
 // @description  Downloads and saves Lezhin chapter images to a PDF or ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
@@ -45,8 +45,10 @@
     'use strict';
 
     const SCRIPT_NAME_DEBUG = "OFFLINE FOR LEZHIN";
-    const SCRIPT_VERSION = typeof GM_info !== 'undefined' ? GM_info.script.version : 'unknown';
+    const SCRIPT_VERSION = typeof GM_info !== 'undefined' ? GM_info.script.version : 'Unknown';
     const STORAGE_KEY_AUTO_REFRESH = 'autoRefresh';
+    const STORAGE_KEY_WEBP_QUALITY = 'webp-quality';
+    const usesBrowserWebpQuality = () => localStorage.getItem(STORAGE_KEY_WEBP_QUALITY) === 'browser-default';
     const STORAGE_KEY_SMALL_FILE_SIZE = 'small-file-size';
     const STORAGE_KEY_SAVE_AS_PDF = 'save-as-pdf';
     const UI_TOAST_DURATION_BY_SEVERITY = {
@@ -66,7 +68,9 @@
         DIAGNOSING: 'Diagnosing...',
     };
     const UI_ICON_SET = {
+        arrow: `<svg class="left-arrow-icon" aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M15 17.898C15 18.972 13.7351 19.546 12.9268 18.8388L6.61617 13.3169C5.81935 12.6197 5.81935 11.3801 6.61617 10.6829L12.9268 5.16108C13.7351 4.45388 15 5.02785 15 6.1018L15 17.898Z" fill="white"/></svg>`,        
         bookmark: `<svg class="bookmark-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28"><path d="M9.25 3.5C7.45507 3.5 6 4.95507 6 6.75V24.75C6 25.0348 6.16133 25.2951 6.41643 25.4217C6.67153 25.5484 6.97638 25.5197 7.20329 25.3475L14 20.1914L20.7967 25.3475C21.0236 25.5197 21.3285 25.5484 21.5836 25.4217C21.8387 25.2951 22 25.0348 22 24.75V6.75C22 4.95507 20.5449 3.5 18.75 3.5H9.25Z" fill="white"/></svg>`,
+        settings: `<svg class="settings-icon" aria-hidden="true" focusable="false" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M19.9818 21.6364L21.7093 22.3948C22.0671 22.5518 22.4849 22.4657 22.7517 22.1799C23.9944 20.8492 24.9198 19.2536 25.4586 17.5131C25.5748 17.1376 25.441 16.7296 25.1251 16.4965L23.5988 15.3698C23.1628 15.0489 22.9 14.5403 22.9 13.9994C22.9 13.4586 23.1628 12.95 23.5978 12.6297L25.1228 11.5035C25.4386 11.2703 25.5723 10.8623 25.4561 10.487C24.9172 8.74611 23.9912 7.1504 22.7478 5.81991C22.4807 5.53405 22.0626 5.44818 21.7048 5.60568L19.9843 6.36294C19.769 6.45838 19.5385 6.507 19.3055 6.50663C18.4387 6.50572 17.7116 5.85221 17.617 4.98937L17.4079 3.11017C17.3643 2.71823 17.077 2.39734 16.6928 2.31149C15.8128 2.11485 14.9147 2.01047 14.0131 2.00006C13.0891 2.01071 12.19 2.11504 11.3089 2.31138C10.9245 2.39704 10.637 2.71803 10.5933 3.11017L10.3844 4.98794C10.3244 5.52527 10.0133 6.00264 9.54617 6.27415C9.07696 6.54881 8.50793 6.58168 8.01296 6.36404L6.29276 5.60691C5.93492 5.44941 5.51684 5.53528 5.24971 5.82114C4.00637 7.15163 3.08038 8.74734 2.54142 10.4882C2.42513 10.8638 2.55914 11.272 2.87529 11.5051L4.40162 12.6306C4.83721 12.9512 5.09414 13.4598 5.09414 14.0007C5.09414 14.5415 4.83721 15.0501 4.40219 15.3703L2.8749 16.4977C2.55922 16.7307 2.42533 17.1384 2.54122 17.5137C3.07924 19.2561 4.00474 20.8536 5.24806 22.1859C5.51493 22.4718 5.93281 22.558 6.29071 22.4009L8.01859 21.6424C8.51117 21.4269 9.07783 21.4586 9.54452 21.7281C10.0112 21.9976 10.3225 22.4731 10.3834 23.0093L10.5908 24.8855C10.6336 25.273 10.9148 25.5917 11.2933 25.682C13.0725 26.1061 14.9263 26.1061 16.7055 25.682C17.084 25.5917 17.3651 25.273 17.408 24.8855L17.6157 23.0066C17.675 22.4693 17.9729 21.9924 18.44 21.7219C18.9071 21.4515 19.4876 21.4197 19.9818 21.6364ZM14 18C11.7909 18 10 16.2091 10 14C10 11.7909 11.7909 10 14 10C16.2091 10 18 11.7909 18 14C18 16.2091 16.2091 18 14 18Z" fill="currentColor"/></svg>`,
         heart: `<svg class="heart-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12.8198687,5.57958759 L11.9991485,6.40209417 L11.1758977,5.57884333 C9.07682963,3.47977526 5.67356786,3.47977526 3.5744998,5.57884333 C1.47543173,7.6779114 1.47543173,11.0811732 3.5744998,13.1802412 L11.4698687,21.0756101 C11.7627619,21.3685033 12.2376356,21.3685033 12.5305288,21.0756101 L20.4319958,13.1787767 C22.5263889,11.0727481 22.5299763,7.6790351 20.4305288,5.57958759 C18.3276384,3.4766972 14.9227559,3.47670037 12.8198687,5.57958759 Z"/></svg>`,
         megaphone: `<svg class="megaphone-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28"><path d="M26.0008 7.35334C26.0008 5.54646 24.2879 4.23059 22.5421 4.69622L4.04548 9.62939C2.84171 9.95045 2.00415 11.0407 2.00415 12.2865V15.7136C2.00415 16.9594 2.84171 18.0496 4.04548 18.3707L7 19.1587V19.5C7 21.9853 9.01472 24 11.5 24C13.2899 24 14.8357 22.955 15.5606 21.4419L22.5421 23.3039C24.2879 23.7695 26.0008 22.4536 26.0008 20.6468V7.35334ZM8.50057 19.5589L14.0722 21.0449C13.5474 21.9168 12.5918 22.5 11.5 22.5C9.86282 22.5 8.53195 21.1886 8.50057 19.5589Z"/></svg>`,
         update: `<svg class="update-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g transform="rotate(90 12 12)"><path d="M7.94822962,5.02850432 C8.2831456,5.46765091 8.19865,6.09515261 7.75950341,6.4300686 C6.03254452,7.74713709 5,9.78703304 5,12 C5,15.4973075 7.56475199,18.395585 10.9159977,18.9165744 L10.2071068,18.2071068 C9.81658249,17.1834175 9.81658249,17.1834175 10.2071068,16.7928932 C10.5976311,16.4023689 11.2307961,16.4023689 11.6213203,16.7928932 L14.1213203,19.2928932 C14.5118446,19.6834175 14.5118446,20.3165825 14.1213203,20.7071068 L11.6213203,23.2071068 C11.2307961,23.5976311 10.5976311,23.5976311 10.2071068,23.2071068 C9.81658249,22.8165825 9.81658249,22.1834175 10.2071068,21.7928932 L11.0502786,20.9504867 C6.52614758,20.4760098 3,16.6497928 3,12 C3,9.15643984 4.32881972,6.5312223 6.54666534,4.83977811 C6.98581193,4.50486213 7.61331363,4.58935773 7.94822962,5.02850432 Z M9.87867966,3.29289322 L12.3786797,0.792893219 C12.7692039,0.402368927 13.4023689,0.402368927 13.7928932,0.792893219 C14.1533772,1.15337718 14.1811067,1.72060824 13.8760818,2.11289944 L13.7928932,2.20710678 L12.9497214,3.0495133 C17.4738524,3.52399021 21,7.35020716 21,12 C21,14.7198329 19.7848559,17.243156 17.7284056,18.9418543 C17.3026041,19.2935809 16.6722931,19.2335313 16.3205666,18.8077299 C15.96884,18.3819284 16.0288896,17.7516174 16.454691,17.3998909 C18.0559569,16.0771906 19,14.1168256 19,12 C19,8.50269253 16.435248,5.60441498 13.0840023,5.08342564 L13.7928932,5.79289322 C14.1834175,6.18341751 14.1834175,6.81658249 13.7928932,7.20710678 C13.4324093,7.56759074 12.8651782,7.59532028 12.472887,7.29029539 L12.3786797,7.20710678 L9.87867966,4.70710678 C9.51819569,4.34662282 9.49046616,3.77939176 9.79549105,3.38710056 L9.87867966,3.29289322 L12.3786797,0.792893219 L9.87867966,3.29289322 Z"/></g></svg>`,
@@ -229,6 +233,11 @@
             message: 'View container not found',
             severity: 'critical'
         },
+        WEBP_CONVERSION_FAILED: {
+            code: 'webp-conversion-failed',
+            message: 'Failed to convert images to WebP',
+            severity: 'important'
+        },
         ZIP_CREATION_FAILED: {
             code: 'zip-creation-failed',
             message: 'ZIP file couldn\'t be created',
@@ -334,7 +343,13 @@
                 40% { opacity: 1; transform: translateY(2px) scale(1.01); }
                 100% { opacity: 0; transform: translateY(-16px) scale(0.96); }
             }
-            #lezhin-toast-container {
+            .offline-toast, .download-button, .download-popup {
+                font-family: var(--font-app-default);
+            }
+            .download-button, .download-button *, .download-popup, .download-popup *, .offline-toast, .offline-toast * {
+                user-select: none !important;
+            }
+            #offline-toast-container {
                 display: flex;
                 flex-direction: column;
                 gap: 10px;
@@ -345,7 +360,7 @@
                 transform: translateX(-50%);
                 pointer-events: none;
             }
-            .lezhin-toast {
+            .offline-toast {
                 position: relative;
                 display: flex;
                 align-items: center;
@@ -367,21 +382,18 @@
                 animation: toast-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
                 pointer-events: auto;
             }
-            .lezhin-toast, .download-button, .download-popup {
-                font-family: var(--font-app-default);
-            }
-            .lezhin-toast.closing {
+            .offline-toast.closing {
                 animation: toast-out 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
             }
-            .lezhin-toast-text {
+            .offline-toast-text {
                 opacity: 1;
                 transition: opacity 0.1s linear 0.15s;
             }
-            .lezhin-toast:hover .lezhin-toast-text {
+            .offline-toast:hover .offline-toast-text {
                 opacity: 0;
                 transition: opacity 0.08s linear 0s;
             }
-            .lezhin-toast-icon {
+            .offline-toast-icon {
                 position: absolute;
                 inset: 0;
                 display: flex;
@@ -390,7 +402,7 @@
                 opacity: 0;
                 transition: opacity 0.1s linear 0s;
             }
-            .lezhin-toast:hover .lezhin-toast-icon {
+            .offline-toast:hover .offline-toast-icon {
                 opacity: 1;
                 transition: opacity 0.15s linear 0.08s;
             }
@@ -429,7 +441,8 @@
             .download-popup {
                 position: fixed;
                 z-index: 9998;
-                width: 400px;
+                min-width: 400px;
+                max-width: 500px;
                 padding: 16px;
                 border-radius: 20px;
                 color: white;
@@ -441,6 +454,36 @@
                 user-select: none;
                 transition: opacity 0.20s ease, visibility 0.20s ease;
                 visibility: hidden;
+            }
+            .download-popup {
+                box-sizing: border-box;
+                max-width: calc(100vw - 24px);
+                max-height: calc(100vh - 24px);
+                overflow-y: auto;
+                scrollbar-gutter: stable;
+            }
+            .download-popup-pages {
+                display: flow-root;
+            }
+            .download-popup-pages.resizing {
+                overflow: hidden;
+            }
+            .download-popup-pages > .download-popup-page {
+                min-width: 0;
+            }
+            .download-popup-page.page-inactive {
+                display: none;
+            }
+            .download-popup-page-heading {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 16px;
+                margin-bottom: 14px;
+            }
+            .download-popup-page-heading .download-popup-section-title {
+                margin: 0;
+                text-align: right;
             }
             .download-popup.visible {
                 opacity: 1;
@@ -489,6 +532,83 @@
                 letter-spacing: 0.06em;
                 text-transform: uppercase;
                 color: var(--color-app-text-muted);
+            }
+            .download-popup-sections {
+                display: flex;
+                align-items: stretch;
+                gap: 14px;
+            }
+            .download-popup-section {
+                flex: 1;
+                min-width: 0;
+            }
+            .download-popup-section-divider {
+                width: 1px;
+                flex-shrink: 0;
+                background: var(--color-app-divider);
+            }
+            .download-popup-webp-options {
+                box-sizing: border-box;
+                margin: 0;
+                min-width: 0;
+                padding: 12px;
+                border-radius: 10px;
+                background: rgba(255,255,255,0.06);
+            }
+            .download-popup-page-heading .download-popup-quality-toggle {
+                margin: 0;
+            }
+            .download-popup-webp-options select:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+            }
+            .download-popup-quality-toggle {
+                display: flex;
+                align-items: center;
+                gap: 3px;
+                padding: 0;
+                margin: 0 0 4px;
+                border: 0;
+                background: transparent;
+                color: var(--color-app-text-secondary);
+                font: inherit;
+                font-size: var(--size-text-popup-section-highlight);
+                text-align: left;
+                cursor: pointer;
+            }
+            .download-popup-quality-toggle[hidden] {
+                display: none;
+            }
+            .download-popup-quality-description {
+                display: grid;
+                grid-template-rows: 0fr;
+                opacity: 0;
+            }
+            .download-popup-quality-description.description-visible {
+                grid-template-rows: 1fr;
+                opacity: 1;
+            }
+            .download-popup-quality-description > div {
+                min-height: 0;
+                overflow: hidden;
+            }
+            .download-popup-quality-toggle:hover {
+                color: white;
+            }
+            .download-popup-webp-options select {
+                box-sizing: border-box;
+                max-width: 100%;
+                width: 100%;
+                margin: 6px 0 0;
+                padding: 8px;
+                border: 1px solid rgba(255,255,255,0.25);
+                border-radius: 6px;
+                background: #292929;
+                color: white;
+                font: inherit;
+            }
+            .download-popup-webp-options .download-popup-setting-highlight {
+                margin-bottom: 0;
             }
             .download-popup-setting-row {
                 display: flex;
@@ -574,22 +694,43 @@
                 opacity: 0.5;
                 cursor: not-allowed;
             }
-            .download-popup-sections {
-                display: flex;
-                align-items: stretch;
-                gap: 14px;
-            }
-            .download-popup-section {
-                flex: 1;
-                min-width: 0;
-            }
-            .download-popup-section-divider {
-                width: 1px;
-                flex-shrink: 0;
-                background: var(--color-app-divider);
-            }
             .download-popup-section .download-popup-setting-row + .download-popup-setting-row {
                 margin-top: 12px;
+            }
+            .download-popup-settings {
+                border: 0;
+                padding: 3px;
+                background: transparent;
+                color: var(--color-app-icon-default);
+                font: inherit;
+                cursor: pointer;
+            }
+            .download-popup-settings:hover, .download-popup-settings:focus-visible {
+                color: white;
+            }
+            .download-popup-settings:hover .settings-icon {
+                transform: rotate(360deg);
+            }
+            #webp-quality-disabled-note {
+                padding-top: 8px;
+            }
+            #webp-quality-disabled-note.with-divider {
+                margin-top: 10px;
+                padding-top: 10px;
+                border-top: 1px solid var(--color-app-divider);
+            }
+            #webp-quality-help {
+                padding-top: 8px;
+            }
+            #webp-quality-options .download-popup-quality-description .download-popup-setting-highlight {
+                padding-left: 5px;
+                padding-right: 5px;
+            }
+            .download-popup-setting-row.setting-disabled {
+                opacity: 0.45;
+            }
+            .switch input:disabled ~ span {
+                cursor: not-allowed;
             }
             .icon-tooltip {
                 display: inline-flex;
@@ -629,6 +770,61 @@
             .icon-tooltip:hover::after, .icon-tooltip:hover::before {
                 opacity: 1;
                 transform: translateX(-50%) translateY(0);
+            }
+            #toggle-webp-quality {
+                position: relative;
+                overflow: visible;
+                margin-top: 0;
+                margin-bottom: 0;
+            }
+            #toggle-webp-quality::before, #toggle-webp-quality::after {
+                content: none;
+                display: none;
+            }
+            #toggle-webp-quality > .advanced-options-tooltip {
+                all: initial;
+                box-sizing: border-box;
+                display: block;
+                position: absolute;
+                top: 50%;
+                right: auto;
+                bottom: auto;
+                left: calc(100% + 8px);
+                width: max-content;
+                height: auto;
+                padding: 6px 8px;
+                border: 0;
+                border-radius: 8px;
+                background: var(--color-app-popup-tooltip);
+                color: white;
+                font-family: var(--font-app-default);
+                font-size: 11px;
+                line-height: 1.4;
+                white-space: nowrap;
+                text-align: left;
+                z-index: 9999;
+                opacity: 0;
+                pointer-events: none;
+                transform: translate(-4px, -50%);
+                transition: opacity 0.2s ease, transform 0.2s ease;
+            }
+            #toggle-webp-quality:hover > .advanced-options-tooltip, #toggle-webp-quality:focus-visible > .advanced-options-tooltip {
+                opacity: 1;
+                transform: translate(0, -50%);
+            }
+            .download-popup-quality-toggle .left-arrow-icon {
+                width: 14px;
+                height: 14px;
+                flex: 0 0 14px;
+            }
+            .settings-icon {
+                display: block;
+                width: 12px;
+                height: 12px;
+            }
+            .settings-icon {
+                transform-origin: center;
+                transition: transform 0.45s ease;
             }
             .bookmark-icon {
                 display: block;
@@ -673,16 +869,7 @@
                 display: block;
                 fill: var(--color-app-icon-default);
             }
-            .download-button, .download-button *, .download-popup, .download-popup *, .lezhin-toast, .lezhin-toast * {
-                user-select: none !important;
-            }
-            .download-popup-setting-row.setting-disabled {
-                opacity: 0.45;
-            }
-            .switch input:disabled ~ span {
-                cursor: not-allowed;
-            }
-            .lezhin-dim-overlay {
+            .offline-dim-overlay {
                 position: fixed;
                 inset: 0;
                 z-index: 9990;
@@ -691,7 +878,7 @@
                 pointer-events: none;
                 transition: opacity 0.25s ease;
             }
-            .lezhin-dim-overlay.visible {
+            .offline-dim-overlay.visible {
                 opacity: 1;
             }
             body.lock-site-ui * {
@@ -701,11 +888,17 @@
             body.lock-site-ui .download-button {
                 pointer-events: auto !important;
             }
+            @media (prefers-reduced-motion: reduce) {
+                .settings-icon {
+                    transition: none;
+                }
+                .download-popup-settings:hover .settings-icon {
+                    transform: none;
+                }
+            }
         `;
         document.head.appendChild(style);
     }
-
-    recordConsoleHistory();
 
     function init() {
         localStorage.removeItem('dim-screen');
@@ -715,6 +908,13 @@
         createStyles();
         createDimOverlay();
         createDownloadButton();
+    }
+
+    function initScriptObservers() {
+        observeURLMutation();
+        initDownloadButtonObserver();
+        RENDER_METHODS.canvas.init();
+        RENDER_METHODS.blob.init();
     }
 
     function observeURLMutation() {
@@ -787,13 +987,6 @@
         }
     }
 
-    function initScriptObservers() {
-        observeURLMutation();
-        initDownloadButtonObserver();
-        RENDER_METHODS.canvas.init();
-        RENDER_METHODS.blob.init();
-    }
-
     function initDownloadButtonObserver() {
         const observer = new MutationObserver(() => {
             const existingButton = document.querySelector('.download-button');
@@ -822,6 +1015,14 @@
             sessionStorage.setItem('lezhin-hard-loaded', '1');
             location.reload();
         }
+    }
+
+    function isMobileDevice() {
+        const userAgentCheck = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+        const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        const smallViewport = window.matchMedia('(max-width: 768px)').matches;
+        const coarsePointer = window.matchMedia('(pointer: coarse)').matches;
+        return userAgentCheck || (hasTouch && (smallViewport || coarsePointer));
     }
 
     function isChapterPage(url = location.pathname) {
@@ -907,14 +1108,6 @@
                 offset: isLezhinx ? 500 : 0
             }
         };
-    }
-
-    function isMobileDevice() {
-        const userAgentCheck = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-        const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-        const smallViewport = window.matchMedia('(max-width: 768px)').matches;
-        const coarsePointer = window.matchMedia('(pointer: coarse)').matches;
-        return userAgentCheck || (hasTouch && (smallViewport || coarsePointer));
     }
 
     function detectRenderType() {
@@ -1509,9 +1702,16 @@
                     class="icon-tooltip" data-tooltip="Donate">
                     ${UI_ICON_SET.heart}
                 </a>
+                <span class="download-popup-meta-sep" aria-hidden="true">·</span>
+                <button type="button" class="icon-tooltip download-popup-settings" id="toggle-webp-quality"
+                    data-tooltip="Advanced Options" aria-label="Advanced Options" aria-controls="webp-quality-options" aria-expanded="false">
+                    ${UI_ICON_SET.settings}
+                    <span class="advanced-options-tooltip" aria-hidden="true">Advanced Options</span>
+                </button>
             </div>
             <div class="download-popup-divider"></div>
-            <div class="download-popup-sections">
+            <div class="download-popup-pages">
+            <div class="download-popup-sections download-popup-page" id="download-popup-home">
                 <div class="download-popup-section">
                     <div class="download-popup-section-title">Downloads</div>
                     <div class="download-popup-setting-row">
@@ -1545,13 +1745,115 @@
                     <button class="diagnostic-button" id="button-run-diagnostic">${UI_BUTTON_LABELS.DIAG_DEFAULT}</button>
                 </div>
             </div>
+                <div class="download-popup-webp-options download-popup-page page-inactive" id="webp-quality-options" aria-hidden="true" inert>
+                    <div class="download-popup-page-heading">
+                        <button type="button" class="download-popup-quality-toggle" id="back-to-download-options">${UI_ICON_SET.arrow}Back</button>
+                        <div class="download-popup-section-title">Advanced options</div>
+                    </div>
+                    <label class="download-popup-setting-label" for="select-webp-quality">WebP Quality</label>
+                    <select id="select-webp-quality" aria-describedby="webp-quality-help webp-quality-disabled-note">
+                        <option value="1.0">Max Quality (recommended)</option>
+                        <option value="browser-default">Browser Default</option>
+                    </select>
+                    <div class="download-popup-quality-description" id="webp-quality-description" aria-hidden="true">
+                        <div><div class="download-popup-setting-highlight" id="webp-quality-help">Uses your browser\'s encoder quality which varies by browser. May apply a blurring effect that smooths out edges and reduces noise.</div></div>
+                    </div>
+                    <div class="download-popup-quality-description" id="webp-quality-disabled-description" aria-hidden="true">
+                        <div><div class="download-popup-setting-highlight" id="webp-quality-disabled-note">Small image size option is disabled</div></div>
+                    </div>
+                </div>
+            </div>
         `;
         document.body.appendChild(popup);
         const savedSmallFileSize = localStorage.getItem(STORAGE_KEY_SMALL_FILE_SIZE) === 'true';
         const smallFileSizeToggle = popup.querySelector('#toggle-small-file-size');
         smallFileSizeToggle.checked = savedSmallFileSize;
+        const homePage = popup.querySelector('#download-popup-home');
+        const backButton = popup.querySelector('#back-to-download-options');
+        const qualityOptions = popup.querySelector('#webp-quality-options');
+        const qualityToggle = popup.querySelector('#toggle-webp-quality');
+        const qualitySelect = popup.querySelector('#select-webp-quality');
+        const qualityDescription = popup.querySelector('#webp-quality-description');
+        const qualityDisabledDescription = popup.querySelector('#webp-quality-disabled-description');
+        const qualityDisabledNote = popup.querySelector('#webp-quality-disabled-note');
+        const popupPages = popup.querySelector('.download-popup-pages');
+        let panelResizeAnimation = null;
+        const resizePanel = update => {
+            const previousHeight = popupPages.getBoundingClientRect().height;
+            if (panelResizeAnimation) {
+                panelResizeAnimation.cancel();
+                panelResizeAnimation = null;
+            }
+            popupPages.classList.remove('resizing');
+            update();
+            const nextHeight = popupPages.getBoundingClientRect().height;
+            if (!popup.classList.contains('visible') ||
+                window.matchMedia('(prefers-reduced-motion: reduce)').matches ||
+                Math.abs(previousHeight - nextHeight) < 0.5) return;
+            popupPages.classList.add('resizing');
+            const animation = popupPages.animate([{
+                    height: previousHeight + 'px'
+                },
+                {
+                    height: nextHeight + 'px'
+                }
+            ], {
+                duration: 200,
+                easing: 'ease'
+            });
+            panelResizeAnimation = animation;
+            animation.onfinish = () => {
+                if (panelResizeAnimation !== animation) return;
+                panelResizeAnimation = null;
+                popupPages.classList.remove('resizing');
+            };
+        };
+        const updateQualityHelp = () => {
+            const unavailable = !smallFileSizeToggle.checked || smallFileSizeToggle.disabled;
+            const visible = qualitySelect.value === 'browser-default' && !unavailable;
+            qualityDescription.classList.toggle('description-visible', visible);
+            qualityDescription.setAttribute('aria-hidden', String(!visible));
+            qualityDisabledDescription.classList.toggle('description-visible', unavailable);
+            qualityDisabledDescription.setAttribute('aria-hidden', String(!unavailable));
+            qualityDisabledNote.classList.toggle('with-divider', visible && unavailable);
+        };
+        const syncQualityHelp = () => resizePanel(updateQualityHelp);
+        let qualityExpanded = false;
+        qualitySelect.value = usesBrowserWebpQuality() ? 'browser-default' : '1.0';
+        syncQualityHelp();
+        qualitySelect.addEventListener('change', () => {
+            localStorage.setItem(STORAGE_KEY_WEBP_QUALITY, qualitySelect.value);
+            syncQualityHelp();
+        });
+        const syncWebpQualityOptions = () => resizePanel(() => {
+            const available = smallFileSizeToggle.checked && !smallFileSizeToggle.disabled;
+            qualityToggle.setAttribute('aria-expanded', String(qualityExpanded));
+            homePage.classList.toggle('page-inactive', qualityExpanded);
+            homePage.inert = qualityExpanded;
+            homePage.setAttribute('aria-hidden', String(qualityExpanded));
+            qualityOptions.classList.toggle('page-inactive', !qualityExpanded);
+            qualityOptions.inert = !qualityExpanded;
+            qualityOptions.setAttribute('aria-hidden', String(!qualityExpanded));
+            qualitySelect.disabled = !available;
+            updateQualityHelp();
+        });
+        qualityToggle.addEventListener('click', () => {
+            qualityExpanded = true;
+            syncWebpQualityOptions();
+            backButton.focus({
+                preventScroll: true
+            });
+        });
+        backButton.addEventListener('click', () => {
+            qualityExpanded = false;
+            syncWebpQualityOptions();
+            qualityToggle.focus({
+                preventScroll: true
+            });
+        });
         smallFileSizeToggle.addEventListener('change', () => {
             localStorage.setItem(STORAGE_KEY_SMALL_FILE_SIZE, String(smallFileSizeToggle.checked));
+            syncWebpQualityOptions();
         });
         const pdfToggle = popup.querySelector('#toggle-pdf');
         pdfToggle.checked = localStorage.getItem(STORAGE_KEY_SAVE_AS_PDF) === 'true';
@@ -1561,6 +1863,7 @@
                 localStorage.getItem(STORAGE_KEY_SMALL_FILE_SIZE) === 'true';
             smallFileSizeToggle.closest('.download-popup-setting-row')
                 .classList.toggle('setting-disabled', pdfToggle.checked);
+            syncWebpQualityOptions();
         };
         pdfToggle.addEventListener('change', () => {
             localStorage.setItem(STORAGE_KEY_SAVE_AS_PDF, String(pdfToggle.checked));
@@ -1574,17 +1877,33 @@
         });
         let showTimer = null;
         let hideTimer = null;
+        let qualityResetTimer = null;
 
         function showPopup() {
             if (btn.disabled) return;
+            clearTimeout(qualityResetTimer);
             const rect = btn.getBoundingClientRect();
-            popup.style.top = rect.bottom + 8 + 'px';
-            popup.style.left = rect.left + rect.width / 2 + 'px';
+            const bounds = popup.getBoundingClientRect();
+            popup.style.top = Math.max(12, Math.min(rect.bottom + 8, window.innerHeight - bounds.height - 12)) + 'px';
+            popup.style.left = Math.max(bounds.width / 2 + 12, Math.min(rect.left + rect.width / 2, window.innerWidth - bounds.width / 2 - 12)) + 'px';
+            popup.style.maxHeight = Math.max(0, window.innerHeight - parseFloat(popup.style.top) - 12) + 'px';
             popup.classList.add('visible');
         }
 
+        function resetHiddenQualityOptions() {
+            if (popup.classList.contains('visible') || Number(getComputedStyle(popup).opacity) > 0) return;
+            clearTimeout(qualityResetTimer);
+            qualityExpanded = false;
+            syncWebpQualityOptions();
+        }
+        popup.addEventListener('transitionend', event => {
+            if (event.target === popup && event.propertyName === 'opacity') resetHiddenQualityOptions();
+        });
+
         function hidePopup() {
             popup.classList.remove('visible');
+            clearTimeout(qualityResetTimer);
+            qualityResetTimer = setTimeout(resetHiddenQualityOptions, 220);
         }
         btn.addEventListener('mouseenter', () => {
             if (btn.disabled) return;
@@ -1621,19 +1940,19 @@
     }
 
     function createDimOverlay() {
-        if (document.querySelector('.lezhin-dim-overlay')) return;
+        if (document.querySelector('.offline-dim-overlay')) return;
         const overlay = document.createElement('div');
-        overlay.className = 'lezhin-dim-overlay';
+        overlay.className = 'offline-dim-overlay';
         document.body.appendChild(overlay);
     }
 
     function showDimOverlay() {
-        const overlay = document.querySelector('.lezhin-dim-overlay');
+        const overlay = document.querySelector('.offline-dim-overlay');
         if (overlay) overlay.classList.add('visible');
     }
 
     function hideDimOverlay() {
-        const overlay = document.querySelector('.lezhin-dim-overlay');
+        const overlay = document.querySelector('.offline-dim-overlay');
         if (overlay) overlay.classList.remove('visible');
     }
 
@@ -1653,6 +1972,197 @@
 
     function unlockPageScroll() {
         document.body.style.overflow = '';
+    }
+
+    function createToastContainer() {
+        if (document.getElementById('offline-toast-container')) return;
+        const container = document.createElement('div');
+        container.id = 'offline-toast-container';
+        document.body.appendChild(container);
+    }
+
+    function getToastDuration(severity = 'normal') {
+        return (
+            UI_TOAST_DURATION_BY_SEVERITY[severity] ||
+            UI_TOAST_DURATION_BY_SEVERITY.normal
+        );
+    }
+
+    function showToast(message, severity = 'normal') {
+        createToastContainer();
+        const toast = document.createElement('button');
+        toast.type = 'button';
+        toast.className = 'offline-toast';
+        toast.setAttribute('aria-label', 'Dismiss');
+        toast.innerHTML =
+            `<span class="offline-toast-text"></span>` +
+            `<span class="offline-toast-icon">${UI_ICON_SET.trash}</span>`;
+        toast.querySelector('.offline-toast-text').textContent = message;
+        toast.onclick = () => closeToast(toast);
+        document
+            .getElementById('offline-toast-container')
+            .appendChild(toast);
+
+        setTimeout(() => {
+            closeToast(toast);
+        }, getToastDuration(severity));
+    }
+
+    function closeToast(toast) {
+        if (toast.classList.contains('closing')) return;
+        toast.classList.add('closing');
+        toast.addEventListener(
+            'animationend',
+            () => toast.remove(), {
+                once: true
+            }
+        );
+    }
+
+    function showErrorMessage(message, severity = 'normal') {
+        showToast(message, severity);
+    }
+
+    function throwDownloadError(error) {
+        if (error instanceof Error) {
+            if (DOWNLOAD_ERROR_INDEX[error.message]) throw error;
+            throw new Error(DOWNLOAD_ERROR_MAP.UNKNOWN_ERROR.code);
+        }
+        if (error?.code) throw new Error(error.code);
+        if (typeof error === 'string' && DOWNLOAD_ERROR_MAP[error]) {
+            throw new Error(DOWNLOAD_ERROR_MAP[error].code);
+        }
+        if (typeof error === 'string' && DOWNLOAD_ERROR_INDEX[error]) throw new Error(error);
+        throw new Error(DOWNLOAD_ERROR_MAP.UNKNOWN_ERROR.code);
+    }
+
+    function handleDownloadError(error) {
+        const known = DOWNLOAD_ERROR_INDEX[error?.message];
+        if (known) {
+            showErrorMessage(
+                known.message,
+                known.severity
+            );
+            return;
+        }
+        console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - DOWNLOAD ERROR OCCURRED, SEE CONSOLE BELOW\n`, error);
+        showErrorMessage(
+            DOWNLOAD_ERROR_MAP.UNKNOWN_ERROR.message,
+            DOWNLOAD_ERROR_MAP.UNKNOWN_ERROR.severity
+        );
+    }
+
+    async function executeDownloadPipeline(btn) {
+        if (state.ui.isDownloading) return;
+        const renderType = resolveRenderType();
+        if (!renderType) return;
+        const usePDF = localStorage.getItem(STORAGE_KEY_SAVE_AS_PDF) === 'true';
+        const oneImagePerPage = usePDF && isHorizontalViewerLayout();
+        const useSmallFileSize = !usePDF && localStorage.getItem(STORAGE_KEY_SMALL_FILE_SIZE) === 'true';
+        state.ui.isDownloading = true;
+        state.ui.phase = 'collecting';
+        const session = startDownloadSession();
+        state.ui.activeDownload = session;
+        btn.disabled = true;
+        const setLabel = label => updateDownloadButton(btn, label);
+        const onCollect = c => setLabel(UI_BUTTON_LABELS.COLLECTING(c));
+        const onConvert = (c, t) =>
+            setLabel(UI_BUTTON_LABELS.CONVERTING(c, t));
+        const finalizeZip = async (zip, donePromise) => {
+            try {
+                zip.end();
+                await donePromise;
+            } catch {
+                throwDownloadError('ZIP_CREATION_FAILED');
+            }
+        };
+        const createZipInstance = () =>
+            createStreamingZip(
+                getSeriesTitle(),
+                getSeriesChapter()
+            );
+        setLabel(UI_BUTTON_LABELS.COLLECTING(0));
+        await new Promise(requestAnimationFrame);
+        let completed = false;
+        try {
+            lockPageScroll();
+            lockPageInteraction();
+            scrollToTop();
+            await new Promise(r => setTimeout(r, 300));
+            const collected = await collectChapterImages(session, renderType, onCollect);
+            const images = validateCollectedImages(session, collected.images);
+            state.ui.phase = 'downloading';
+            if (collected.renderType === 'canvas' && !usePDF) {
+                const {
+                    zip,
+                    donePromise
+                } = createZipInstance();
+                const success = await RENDER_METHODS.canvas.streamZip(session, images, zip, onConvert, useSmallFileSize);
+                if (!success) throwDownloadError('DOWNLOAD_ABORTED');
+                await finalizeZip(zip, donePromise);
+            } else {
+                const files = collected.renderType === 'canvas' ?
+                    await RENDER_METHODS.canvas.buildPDFFiles(session, images, onConvert) :
+                    collected.renderType === 'blob' ?
+                    await RENDER_METHODS.blob.buildFiles(session, images, onConvert, useSmallFileSize, usePDF) :
+                    await RENDER_METHODS.webp.buildFiles(session, images, onConvert, useSmallFileSize, usePDF);
+                if (usePDF) {
+                    await downloadChapterPDF(session, files, getSeriesTitle(), getSeriesChapter(), setLabel, oneImagePerPage);
+                } else {
+                    if (session.cancelled) throwDownloadError('DOWNLOAD_ABORTED');
+                    if (!files || !Object.keys(files).length) throwDownloadError('NO_IMAGES_COLLECTED');
+                    const {
+                        zip,
+                        donePromise
+                    } = createZipInstance();
+                    const entries = Object.entries(files);
+                    let completedCount = 0;
+                    for (const [name, data] of entries) {
+                        if (session.cancelled) throwDownloadError('DOWNLOAD_ABORTED');
+                        const file = new fflate.ZipDeflate(name, {
+                            level: 6
+                        });
+                        zip.add(file);
+                        file.push(data, true);
+                        onConvert(++completedCount, entries.length);
+                    }
+                    await finalizeZip(zip, donePromise);
+                }
+            }
+            setLabel(UI_BUTTON_LABELS.COMPLETE);
+            resetDownloadButton(btn);
+            completed = true;
+        } catch (e) {
+            handleDownloadError(e);
+            setLabel(UI_BUTTON_LABELS.DEFAULT);
+        } finally {
+            state.ui.phase = 'idle';
+            state.ui.isDownloading = false;
+            if (state.ui.activeDownload === session) {
+                state.ui.activeDownload = null;
+            }
+            btn.disabled = false;
+            unlockPageScroll();
+            unlockPageInteraction();
+            if (
+                completed &&
+                !sessionStorage.getItem(
+                    STORAGE_KEY_AUTO_REFRESH
+                )
+            ) {
+                sessionStorage.setItem(
+                    STORAGE_KEY_AUTO_REFRESH,
+                    '1'
+                );
+                window.scrollTo({
+                    top: 0,
+                    behavior: 'smooth'
+                });
+                setTimeout(() => {
+                    location.reload();
+                }, 700);
+            }
+        }
     }
 
     function startDownloadSession() {
@@ -1682,6 +2192,40 @@
         state.blob.buffer.clear();
         state.blob.pages.clear();
         state.blob.enabled = false;
+    }
+
+    async function collectChapterImages(session, renderType, onProgress) {
+        function getCollectionMethod(renderType, horizontalType = getHorizontalViewerType()) {
+            const method = RENDER_METHODS[renderType];
+            return method ? method.horizontal[horizontalType] || method.normal : null;
+        }
+        const visited = new Set();
+        while (!visited.has(renderType)) {
+            if (session.cancelled) throwDownloadError('DOWNLOAD_ABORTED');
+            visited.add(renderType);
+            const collect = getCollectionMethod(renderType);
+            if (!collect) throwDownloadError('NO_IMAGES_COLLECTED');
+            const result = await collect(session, onProgress);
+            if (session.cancelled) throwDownloadError('DOWNLOAD_ABORTED');
+            if (renderType === 'webp' && result.switchTo) {
+                renderType = result.switchTo;
+                setRenderType(renderType);
+                continue;
+            }
+            if (renderType === 'webp') {
+                await retryMissingPages(session, state.ui.images, onProgress);
+                if (session.cancelled) throwDownloadError('DOWNLOAD_ABORTED');
+                return {
+                    renderType,
+                    images: RENDER_METHODS.webp.orderedPages()
+                };
+            }
+            return {
+                renderType,
+                images: result
+            };
+        }
+        throwDownloadError('NO_IMAGES_COLLECTED');
     }
 
     function validateCollectedPageCount(collectedCount) {
@@ -1811,21 +2355,6 @@
         );
     }
 
-    function logCollection(event, {
-        startedAt,
-        ...details
-    } = {}, level = 'debug') {
-        if (startedAt !== undefined) {
-            details.elapsedMs = startedAt === null ? null : Math.round(performance.now() - startedAt);
-        }
-        const message = `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - COLLECTION: ${event}`;
-        if (level === 'warn') {
-            console.warn(message, details);
-        } else {
-            console.debug(message, details);
-        }
-    }
-
     async function retryMissingPages(
         session,
         collectedMap,
@@ -1939,38 +2468,19 @@
         return finalMissing;
     }
 
-    async function collectChapterImages(session, renderType, onProgress) {
-        function getCollectionMethod(renderType, horizontalType = getHorizontalViewerType()) {
-            const method = RENDER_METHODS[renderType];
-            return method ? method.horizontal[horizontalType] || method.normal : null;
+    function logCollection(event, {
+        startedAt,
+        ...details
+    } = {}, level = 'debug') {
+        if (startedAt !== undefined) {
+            details.elapsedMs = startedAt === null ? null : Math.round(performance.now() - startedAt);
         }
-        const visited = new Set();
-        while (!visited.has(renderType)) {
-            if (session.cancelled) throwDownloadError('DOWNLOAD_ABORTED');
-            visited.add(renderType);
-            const collect = getCollectionMethod(renderType);
-            if (!collect) throwDownloadError('NO_IMAGES_COLLECTED');
-            const result = await collect(session, onProgress);
-            if (session.cancelled) throwDownloadError('DOWNLOAD_ABORTED');
-            if (renderType === 'webp' && result.switchTo) {
-                renderType = result.switchTo;
-                setRenderType(renderType);
-                continue;
-            }
-            if (renderType === 'webp') {
-                await retryMissingPages(session, state.ui.images, onProgress);
-                if (session.cancelled) throwDownloadError('DOWNLOAD_ABORTED');
-                return {
-                    renderType,
-                    images: RENDER_METHODS.webp.orderedPages()
-                };
-            }
-            return {
-                renderType,
-                images: result
-            };
+        const message = `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - COLLECTION: ${event}`;
+        if (level === 'warn') {
+            console.warn(message, details);
+        } else {
+            console.debug(message, details);
         }
-        throwDownloadError('NO_IMAGES_COLLECTED');
     }
 
     function createWebpMethod() {
@@ -2202,9 +2712,10 @@
         }
 
         async function buildWebpImageFiles(session, images, onProgress, useSmallFileSize, usePDF = false) {
-            const mimeType = usePDF ? 'image/jpeg' : 'image/png';
-            const extension = usePDF ? 'jpg' : 'png';
-            const conversionError = usePDF ? 'JPEG_CONVERSION_FAILED' : 'PNG_CONVERSION_FAILED';
+            const browserWebp = !usePDF && useSmallFileSize && usesBrowserWebpQuality();
+            const mimeType = usePDF ? 'image/jpeg' : browserWebp ? 'image/webp' : 'image/png';
+            const extension = usePDF ? 'jpg' : browserWebp ? 'webp' : 'png';
+            const conversionError = usePDF ? 'JPEG_CONVERSION_FAILED' : browserWebp ? 'WEBP_CONVERSION_FAILED' : 'PNG_CONVERSION_FAILED';
             const quality = usePDF ? 0.92 : undefined;
             async function convertWebpPages(session, urls, onProgress) {
                 const files = {};
@@ -2212,8 +2723,7 @@
                 let completed = 0;
                 onProgress(0, total);
                 const workerCount = getOptimalWorkerCount();
-                const CAN_USE_OFFSCREEN =
-                    typeof OffscreenCanvas !== 'undefined' &&
+                const CAN_USE_OFFSCREEN = !browserWebp && typeof OffscreenCanvas !== 'undefined' &&
                     OffscreenCanvas.prototype.convertToBlob &&
                     typeof createImageBitmap === 'function';
                 const idleYield = () => new Promise(r => requestAnimationFrame(r));
@@ -2256,6 +2766,10 @@
                                 ctx.fillRect(0, 0, canvas.width, canvas.height);
                             }
                             ctx.drawImage(img, 0, 0);
+                            if (browserWebp) {
+                                encodeCanvasImage(canvas, mimeType).then(resolve, reject);
+                                return;
+                            }
                             canvas.toBlob(encodedBlob => {
                                 if (!encodedBlob) {
                                     return reject(
@@ -2308,8 +2822,7 @@
                 }
                 return files;
             }
-
-            if (usePDF || !useSmallFileSize) return convertWebpPages(session, images, onProgress);
+            if (usePDF || !useSmallFileSize || browserWebp) return convertWebpPages(session, images, onProgress);
             const files = {};
             const total = images.length;
             let completedWebp = 0;
@@ -2577,7 +3090,6 @@
             }
             return files;
         }
-
         return {
             normal: collectCanvasPages,
             horizontal: {},
@@ -2776,7 +3288,7 @@
                                     index,
                                     outcome: 'observed-available',
                                     startedAt: null,
-                                    timingNote: 'No individual scroll start (may be preloaded or loaded alongside another page)'
+                                    timingNote: 'No individual scroll start (may be pre-loaded or loaded alongside another page)'
                                 });
                             }
                         }
@@ -3248,7 +3760,6 @@
                 ctx.drawImage(img, 0, 0);
                 return encodeCanvasImage(canvas, mimeType, quality);
             }
-
             const files = {};
             const total = images.length;
             onProgress(0, total);
@@ -3293,6 +3804,154 @@
             init: initBlobBackgroundCollector,
             buildFiles: buildBlobImageFiles
         };
+    }
+
+    function getImageData(url) {
+        return new Promise((resolve, reject) => {
+            recordDiagnosticRequest('GET', url, '', false);
+
+            function fail(type, details = null) {
+                if (details) {
+                    console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ${type}`, details);
+                }
+                switch (type) {
+                    case 'HTTP_401':
+                    case 'HTTP_403':
+                        return reject(new Error(
+                            DOWNLOAD_ERROR_MAP.IMAGE_ACCESS_DENIED.code
+                        ));
+                    case 'REQUEST_TIMEOUT':
+                        return reject(new Error(
+                            DOWNLOAD_ERROR_MAP.REQUEST_TIMEOUT.code
+                        ));
+                    case 'NETWORK_ERROR':
+                        return reject(new Error(
+                            DOWNLOAD_ERROR_MAP.NETWORK_ERROR.code
+                        ));
+                    default:
+                        return reject(new Error(
+                            DOWNLOAD_ERROR_MAP.IMAGE_REQUEST_FAILED.code
+                        ));
+                }
+            }
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url,
+                responseType: 'arraybuffer',
+                headers: {
+                    Referer: `${location.origin}/`
+                },
+                timeout: 30000,
+                onload: response => {
+                    const {
+                        status,
+                        response: data
+                    } = response;
+                    recordDiagnosticRequest('GET', url, `HTTP/${status || 0}`);
+                    if (
+                        status >= 200 &&
+                        status < 300 &&
+                        data
+                    ) {
+                        resolve(new Uint8Array(data));
+                        return;
+                    }
+                    fail(`HTTP_${status || 'UNKNOWN'}`, {
+                        status,
+                        url
+                    });
+                },
+                onerror: error => {
+                    recordDiagnosticRequest('GET', url, 'HTTP/0 NETWORK ERROR');
+                    fail('NETWORK_ERROR', {
+                        url,
+                        error
+                    });
+                },
+                ontimeout: () => {
+                    recordDiagnosticRequest('GET', url, 'HTTP/0 TIMEOUT');
+                    fail('REQUEST_TIMEOUT', url);
+                }
+            });
+        });
+    }
+
+    function isLosslessWebp(bytes) {
+        const tag = offset => String.fromCharCode(...bytes.subarray(offset, offset + 4));
+        if (bytes.length < 12 || tag(0) !== 'RIFF' || tag(8) !== 'WEBP') return false;
+        const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        const end = view.getUint32(4, true) + 8;
+        if (end !== bytes.length) return false;
+        let foundLossless = false;
+        let offset = 12;
+        while (offset + 8 <= end) {
+            const type = tag(offset);
+            const size = view.getUint32(offset + 4, true);
+            const next = offset + 8 + size + (size % 2);
+            if (next > end) return false;
+            if (type === 'VP8 ' || type === 'ANIM' || type === 'ANMF') return false;
+            if (type === 'VP8L') {
+                if (foundLossless || size < 5 || bytes[offset + 8] !== 0x2f) return false;
+                foundLossless = true;
+            }
+            offset = next;
+        }
+        return offset === end && foundLossless;
+    }
+
+    async function encodeCanvasImage(canvas, mimeType, quality) {
+        const wantsWebp = mimeType === 'image/webp';
+        const browserDefault = wantsWebp && usesBrowserWebpQuality();
+        const errorCode = wantsWebp ? (browserDefault ? DOWNLOAD_ERROR_MAP.WEBP_CONVERSION_FAILED.code : DOWNLOAD_ERROR_MAP.LOSSLESS_WEBP_FAILED.code) :
+            mimeType === 'image/png' ? DOWNLOAD_ERROR_MAP.PNG_CONVERSION_FAILED.code :
+            DOWNLOAD_ERROR_MAP.JPEG_CONVERSION_FAILED.code;
+        try {
+            const blob = await new Promise((resolve, reject) => {
+                const onBlob = result => {
+                    if (!result) {
+                        reject(new Error(errorCode));
+                        return;
+                    }
+                    resolve(result);
+                };
+                if (browserDefault) canvas.toBlob(onBlob, mimeType);
+                else canvas.toBlob(onBlob, mimeType, wantsWebp ? 1 : quality);
+            });
+            const bytes = new Uint8Array(await blob.arrayBuffer());
+            if (blob.type !== mimeType || (wantsWebp && !browserDefault && !isLosslessWebp(bytes))) {
+                throw new Error(errorCode);
+            }
+            return bytes;
+        } catch (error) {
+            throw new Error(errorCode, {
+                cause: error
+            });
+        }
+    }
+
+    function getOptimalWorkerCount() {
+        const cores = navigator.hardwareConcurrency || 4;
+        const memory = navigator.deviceMemory || 4;
+        let workers = Math.floor(cores / 2);
+        if (memory <= 2) workers = 2;
+        else if (memory <= 4) workers = Math.min(workers, 3);
+        if (isMobileDevice()) workers = Math.min(workers, 3);
+        return Math.max(2, Math.min(6, workers));
+    }
+
+    async function taskQueue(limit, items, worker) {
+        const results = [];
+        const executing = [];
+        for (let i = 0; i < items.length; i++) {
+            const p = Promise.resolve().then(() => worker(items[i], i));
+            results.push(p);
+            if (limit <= items.length) {
+                const e = p.then(() => executing.splice(executing.indexOf(e), 1));
+                executing.push(e);
+                if (executing.length >= limit) await Promise.race(executing);
+            }
+        }
+        return Promise.all(results);
     }
 
     async function downloadChapterPDF(session, files, series, chapter, setLabel, oneImagePerPage = false) {
@@ -3429,210 +4088,6 @@
         };
     }
 
-    function getOptimalWorkerCount() {
-        const cores = navigator.hardwareConcurrency || 4;
-        const memory = navigator.deviceMemory || 4;
-        let workers = Math.floor(cores / 2);
-        if (memory <= 2) workers = 2;
-        else if (memory <= 4) workers = Math.min(workers, 3);
-        if (isMobileDevice()) workers = Math.min(workers, 3);
-        return Math.max(2, Math.min(6, workers));
-    }
-
-    async function taskQueue(limit, items, worker) {
-        const results = [];
-        const executing = [];
-        for (let i = 0; i < items.length; i++) {
-            const p = Promise.resolve().then(() => worker(items[i], i));
-            results.push(p);
-            if (limit <= items.length) {
-                const e = p.then(() => executing.splice(executing.indexOf(e), 1));
-                executing.push(e);
-                if (executing.length >= limit) await Promise.race(executing);
-            }
-        }
-        return Promise.all(results);
-    }
-
-    function isLosslessWebp(bytes) {
-        const tag = offset => String.fromCharCode(...bytes.subarray(offset, offset + 4));
-        if (bytes.length < 12 || tag(0) !== 'RIFF' || tag(8) !== 'WEBP') return false;
-        const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-        const end = view.getUint32(4, true) + 8;
-        if (end !== bytes.length) return false;
-        let foundLossless = false;
-        let offset = 12;
-        while (offset + 8 <= end) {
-            const type = tag(offset);
-            const size = view.getUint32(offset + 4, true);
-            const next = offset + 8 + size + (size % 2);
-            if (next > end) return false;
-            if (type === 'VP8 ' || type === 'ANIM' || type === 'ANMF') return false;
-            if (type === 'VP8L') {
-                if (foundLossless || size < 5 || bytes[offset + 8] !== 0x2f) return false;
-                foundLossless = true;
-            }
-            offset = next;
-        }
-        return offset === end && foundLossless;
-    }
-
-    async function encodeCanvasImage(canvas, mimeType, quality) {
-        const wantsWebp = mimeType === 'image/webp';
-        const errorCode = wantsWebp ? DOWNLOAD_ERROR_MAP.LOSSLESS_WEBP_FAILED.code :
-            mimeType === 'image/png' ? DOWNLOAD_ERROR_MAP.PNG_CONVERSION_FAILED.code :
-            DOWNLOAD_ERROR_MAP.JPEG_CONVERSION_FAILED.code;
-        try {
-            const blob = await new Promise((resolve, reject) => {
-                canvas.toBlob(result => {
-                    if (!result) {
-                        reject(new Error(errorCode));
-                        return;
-                    }
-                    resolve(result);
-                }, mimeType, wantsWebp ? 1 : quality);
-            });
-            const bytes = new Uint8Array(await blob.arrayBuffer());
-            if (blob.type !== mimeType || (wantsWebp && !isLosslessWebp(bytes))) {
-                throw new Error(errorCode);
-            }
-            return bytes;
-        } catch (error) {
-            throw new Error(errorCode, {
-                cause: error
-            });
-        }
-    }
-
-    function getImageData(url) {
-        return new Promise((resolve, reject) => {
-            recordDiagnosticRequest('GET', url, '', false);
-
-            function fail(type, details = null) {
-                if (details) {
-                    console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ${type}`, details);
-                }
-                switch (type) {
-                    case 'HTTP_401':
-                    case 'HTTP_403':
-                        return reject(new Error(
-                            DOWNLOAD_ERROR_MAP.IMAGE_ACCESS_DENIED.code
-                        ));
-                    case 'REQUEST_TIMEOUT':
-                        return reject(new Error(
-                            DOWNLOAD_ERROR_MAP.REQUEST_TIMEOUT.code
-                        ));
-                    case 'NETWORK_ERROR':
-                        return reject(new Error(
-                            DOWNLOAD_ERROR_MAP.NETWORK_ERROR.code
-                        ));
-                    default:
-                        return reject(new Error(
-                            DOWNLOAD_ERROR_MAP.IMAGE_REQUEST_FAILED.code
-                        ));
-                }
-            }
-            GM_xmlhttpRequest({
-                method: 'GET',
-                url,
-                responseType: 'arraybuffer',
-                headers: {
-                    Referer: `${location.origin}/`
-                },
-                timeout: 30000,
-                onload: response => {
-                    const {
-                        status,
-                        response: data
-                    } = response;
-                    recordDiagnosticRequest('GET', url, `HTTP/${status || 0}`);
-                    if (
-                        status >= 200 &&
-                        status < 300 &&
-                        data
-                    ) {
-                        resolve(new Uint8Array(data));
-                        return;
-                    }
-                    fail(`HTTP_${status || 'UNKNOWN'}`, {
-                        status,
-                        url
-                    });
-                },
-                onerror: error => {
-                    recordDiagnosticRequest('GET', url, 'HTTP/0 NETWORK ERROR');
-                    fail('NETWORK_ERROR', {
-                        url,
-                        error
-                    });
-                },
-                ontimeout: () => {
-                    recordDiagnosticRequest('GET', url, 'HTTP/0 TIMEOUT');
-                    fail('REQUEST_TIMEOUT', url);
-                }
-            });
-        });
-    }
-
-    function recordConsoleHistory() {
-        function formatMessage(args) {
-            const firstArg = typeof args[0] === 'string' ? args[0] : '';
-            if (!firstArg.includes(SCRIPT_NAME_DEBUG)) return null;
-            let fmt = firstArg;
-            const rest = args.slice(1);
-            fmt = fmt.replace(/%c/g, () => {
-                rest.shift();
-                return '';
-            });
-            const extras = rest.map(arg => {
-                if (typeof arg === 'string') return arg;
-                try {
-                    return JSON.stringify(arg);
-                } catch {
-                    return String(arg);
-                }
-            });
-            const cleaned = [fmt, ...extras].join(' ').trim().replace(
-                new RegExp(`${SCRIPT_NAME_DEBUG} v[\\d.]+ - `, 'g'),
-                ''
-            );
-            const ts = new Date().toISOString().replace('T', ' ').slice(0, 23);
-            return `[${ts}] ${cleaned}`;
-        }
-        if (window.__lezhinConsoleHistoryInstalled) return;
-        window.__lezhinConsoleHistoryInstalled = true;
-        ['log', 'debug', 'warn', 'error'].forEach(level => {
-            const original = console[level].bind(console);
-            console[level] = function(...args) {
-                original(...args);
-                const entry = formatMessage(args);
-                if (!entry) return;
-                state.diagnostics.consoleHistory.push(entry);
-                if (state.diagnostics.consoleHistory.length > 1000) {
-                    state.diagnostics.consoleHistory.shift();
-                }
-            };
-        });
-    }
-
-    function recordDiagnosticRequest(type, url, details = '', log = true) {
-        if (!state.diagnostics.active || !url) return;
-        const key = `${type}|${url}`;
-        const existing = state.diagnostics.requests.get(key);
-        if (existing && !details) return;
-        const request = existing || {
-            type,
-            url
-        };
-        request.details = details;
-        state.diagnostics.requests.set(key, request);
-        if (!log) return;
-        console.debug(
-            `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ${type}: ${url}` +
-            (details ? ` ${details}` : '')
-        );
-    }
-
     async function executeDiagnosticPipeline(mainBtn, diagBtn) {
         function getDiagnosticSelectors() {
             function getElementSelector(element) {
@@ -3655,17 +4110,16 @@
                 }
                 return parts.join(' > ');
             }
-            const viewer = getViewerContainer();
+            const viewerSelector = VIEWER_CONTAINER_SELECTORS.find(value => document.querySelector(value));
+            const viewer = viewerSelector ? document.querySelector(viewerSelector) : null;
             const horizontal = getHorizontalViewerType();
-            let render;
-            if (horizontal === 'jp') render = document.querySelector(RENDER_PAGE_SELECTORS_HORIZONTAL.jp.spread);
-            else {
-                const selector = RENDER_PAGE_SELECTORS.find(value => document.querySelector(value));
-                render = selector ? document.querySelector(selector) : null;
-            }
+            const renderSelector = horizontal === 'jp' ?
+                RENDER_PAGE_SELECTORS_HORIZONTAL.jp.spread :
+                RENDER_PAGE_SELECTORS.find(value => document.querySelector(value));
+            const render = renderSelector ? document.querySelector(renderSelector) : null;
             return {
-                render: getElementSelector(render),
-                viewer: getElementSelector(viewer)
+                render: `${renderSelector ? "'" + renderSelector + "'" : 'NOT FOUND'} | { ${getElementSelector(render)} }`,
+                viewer: `${viewerSelector ? "'" + viewerSelector + "'" : 'NOT FOUND'} | { ${getElementSelector(viewer)} }`
             };
         }
         if (state.ui.isDownloading) return;
@@ -3780,8 +4234,8 @@
                 '',
                 '-- INITIAL DIAGNOSIS --',
                 '',
-                `RENDER_PAGE_SELECTORS: { ${matchedSelectors.render} }`,
-                `VIEWER_PAGE_SELECTORS: { ${matchedSelectors.viewer} }`,
+                `RENDER_PAGE_SELECTORS: ${matchedSelectors.render}`,
+                `VIEWER_PAGE_SELECTORS: ${matchedSelectors.viewer}`,
                 '',
                 `TOTAL_PAGE_COUNT: { ${totalPageCount} }`,
                 `SERIES_TITLE: { ${getSeriesTitle()} }`,
@@ -3789,6 +4243,8 @@
                 `RENDER_TYPE: ${(state.viewer.type || 'NULL').toUpperCase()}`,
                 `SAVE_AS_PDF: ${boolStr(localStorage.getItem(STORAGE_KEY_SAVE_AS_PDF) === 'true')}`,
                 `SMALL_FILE_SIZE: ${boolStr(localStorage.getItem(STORAGE_KEY_SMALL_FILE_SIZE) === 'true')}`,
+                `WEBP_QUALITY: ${usesBrowserWebpQuality() ? 'BROWSER_DEFAULT' : 'MAX_QUALITY'}`,
+                `WEBP_QUALITY_ACTIVE: ${boolStr(localStorage.getItem(STORAGE_KEY_SAVE_AS_PDF) !== 'true' && localStorage.getItem(STORAGE_KEY_SMALL_FILE_SIZE) === 'true')}`,
                 '',
                 `IS_CHAPTER_PAGE: ${boolStr(isChapterPage())}`,
                 `IS_ALTERNATE_LAYOUT: ${boolStr(isAlternateViewerLayout())}`,
@@ -3831,7 +4287,7 @@
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = 'Offline_Lezhin_Debug.log';
+                a.download = `Offline for Lezhin Debug v${SCRIPT_VERSION}.log`;
                 a.click();
                 setTimeout(() => URL.revokeObjectURL(url), 1000);
             } catch (error) {
@@ -3895,120 +4351,63 @@
         }
     }
 
-    async function executeDownloadPipeline(btn) {
-        if (state.ui.isDownloading) return;
-        const renderType = resolveRenderType();
-        if (!renderType) return;
-        const usePDF = localStorage.getItem(STORAGE_KEY_SAVE_AS_PDF) === 'true';
-        const oneImagePerPage = usePDF && isHorizontalViewerLayout();
-        const useSmallFileSize = !usePDF && localStorage.getItem(STORAGE_KEY_SMALL_FILE_SIZE) === 'true';
-        console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - DOWNLOAD SETTINGS: ` +
-            `PDF: ${usePDF ? 'TRUE' : 'FALSE'} | ` +
-            `SMALL FILE SIZE: ${useSmallFileSize ? 'TRUE' : 'FALSE'}`);
-        state.ui.isDownloading = true;
-        state.ui.phase = 'collecting';
-        const session = startDownloadSession();
-        state.ui.activeDownload = session;
-        btn.disabled = true;
-        const setLabel = label => updateDownloadButton(btn, label);
-        const onCollect = c => setLabel(UI_BUTTON_LABELS.COLLECTING(c));
-        const onConvert = (c, t) =>
-            setLabel(UI_BUTTON_LABELS.CONVERTING(c, t));
-        const finalizeZip = async (zip, donePromise) => {
-            try {
-                zip.end();
-                await donePromise;
-            } catch {
-                throwDownloadError('ZIP_CREATION_FAILED');
-            }
-        };
-        const createZipInstance = () =>
-            createStreamingZip(
-                getSeriesTitle(),
-                getSeriesChapter()
-            );
-        setLabel(UI_BUTTON_LABELS.COLLECTING(0));
-        await new Promise(requestAnimationFrame);
-        let completed = false;
-        try {
-            lockPageScroll();
-            lockPageInteraction();
-            scrollToTop();
-            await new Promise(r => setTimeout(r, 300));
-            const collected = await collectChapterImages(session, renderType, onCollect);
-            const images = validateCollectedImages(session, collected.images);
-            state.ui.phase = 'downloading';
-            if (collected.renderType === 'canvas' && !usePDF) {
-                const {
-                    zip,
-                    donePromise
-                } = createZipInstance();
-                const success = await RENDER_METHODS.canvas.streamZip(session, images, zip, onConvert, useSmallFileSize);
-                if (!success) throwDownloadError('DOWNLOAD_ABORTED');
-                await finalizeZip(zip, donePromise);
-            } else {
-                const files = collected.renderType === 'canvas' ?
-                    await RENDER_METHODS.canvas.buildPDFFiles(session, images, onConvert) :
-                    collected.renderType === 'blob' ?
-                    await RENDER_METHODS.blob.buildFiles(session, images, onConvert, useSmallFileSize, usePDF) :
-                    await RENDER_METHODS.webp.buildFiles(session, images, onConvert, useSmallFileSize, usePDF);
-                if (usePDF) {
-                    await downloadChapterPDF(session, files, getSeriesTitle(), getSeriesChapter(), setLabel, oneImagePerPage);
-                } else {
-                    if (session.cancelled) throwDownloadError('DOWNLOAD_ABORTED');
-                    if (!files || !Object.keys(files).length) throwDownloadError('NO_IMAGES_COLLECTED');
-                    const {
-                        zip,
-                        donePromise
-                    } = createZipInstance();
-                    const entries = Object.entries(files);
-                    let completedCount = 0;
-                    for (const [name, data] of entries) {
-                        if (session.cancelled) throwDownloadError('DOWNLOAD_ABORTED');
-                        const file = new fflate.ZipDeflate(name, {
-                            level: 6
-                        });
-                        zip.add(file);
-                        file.push(data, true);
-                        onConvert(++completedCount, entries.length);
-                    }
-                    await finalizeZip(zip, donePromise);
+    function recordConsoleHistory() {
+        function formatMessage(args) {
+            const firstArg = typeof args[0] === 'string' ? args[0] : '';
+            if (!firstArg.includes(SCRIPT_NAME_DEBUG)) return null;
+            let fmt = firstArg;
+            const rest = args.slice(1);
+            fmt = fmt.replace(/%c/g, () => {
+                rest.shift();
+                return '';
+            });
+            const extras = rest.map(arg => {
+                if (typeof arg === 'string') return arg;
+                try {
+                    return JSON.stringify(arg);
+                } catch {
+                    return String(arg);
                 }
-            }
-            setLabel(UI_BUTTON_LABELS.COMPLETE);
-            resetDownloadButton(btn);
-            completed = true;
-        } catch (e) {
-            handleDownloadError(e);
-            setLabel(UI_BUTTON_LABELS.DEFAULT);
-        } finally {
-            state.ui.phase = 'idle';
-            state.ui.isDownloading = false;
-            if (state.ui.activeDownload === session) {
-                state.ui.activeDownload = null;
-            }
-            btn.disabled = false;
-            unlockPageScroll();
-            unlockPageInteraction();
-            if (
-                completed &&
-                !sessionStorage.getItem(
-                    STORAGE_KEY_AUTO_REFRESH
-                )
-            ) {
-                sessionStorage.setItem(
-                    STORAGE_KEY_AUTO_REFRESH,
-                    '1'
-                );
-                window.scrollTo({
-                    top: 0,
-                    behavior: 'smooth'
-                });
-                setTimeout(() => {
-                    location.reload();
-                }, 700);
-            }
+            });
+            const cleaned = [fmt, ...extras].join(' ').trim().replace(
+                new RegExp(`${SCRIPT_NAME_DEBUG} v[\\d.]+ - `, 'g'),
+                ''
+            );
+            const ts = new Date().toISOString().replace('T', ' ').slice(0, 23);
+            return `[${ts}] ${cleaned}`;
         }
+        if (window.__lezhinConsoleHistoryInstalled) return;
+        window.__lezhinConsoleHistoryInstalled = true;
+        ['log', 'debug', 'warn', 'error'].forEach(level => {
+            const original = console[level].bind(console);
+            console[level] = function(...args) {
+                original(...args);
+                const entry = formatMessage(args);
+                if (!entry) return;
+                state.diagnostics.consoleHistory.push(entry);
+                if (state.diagnostics.consoleHistory.length > 1000) {
+                    state.diagnostics.consoleHistory.shift();
+                }
+            };
+        });
+    }
+
+    function recordDiagnosticRequest(type, url, details = '', log = true) {
+        if (!state.diagnostics.active || !url) return;
+        const key = `${type}|${url}`;
+        const existing = state.diagnostics.requests.get(key);
+        if (existing && !details) return;
+        const request = existing || {
+            type,
+            url
+        };
+        request.details = details;
+        state.diagnostics.requests.set(key, request);
+        if (!log) return;
+        console.debug(
+            `${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - ${type}: ${url}` +
+            (details ? ` ${details}` : '')
+        );
     }
 
     function disableSiteTelemetry() {
@@ -4154,84 +4553,7 @@
         }
     }
 
-    function createToastContainer() {
-        if (document.getElementById('lezhin-toast-container')) return;
-        const container = document.createElement('div');
-        container.id = 'lezhin-toast-container';
-        document.body.appendChild(container);
-    }
-
-    function getToastDuration(severity = 'normal') {
-        return (
-            UI_TOAST_DURATION_BY_SEVERITY[severity] ||
-            UI_TOAST_DURATION_BY_SEVERITY.normal
-        );
-    }
-
-    function showToast(message, severity = 'normal') {
-        createToastContainer();
-        const toast = document.createElement('button');
-        toast.type = 'button';
-        toast.className = 'lezhin-toast';
-        toast.setAttribute('aria-label', 'Dismiss');
-        toast.innerHTML =
-            `<span class="lezhin-toast-text"></span>` +
-            `<span class="lezhin-toast-icon">${UI_ICON_SET.trash}</span>`;
-        toast.querySelector('.lezhin-toast-text').textContent = message;
-        toast.onclick = () => closeToast(toast);
-        document
-            .getElementById('lezhin-toast-container')
-            .appendChild(toast);
-
-        setTimeout(() => {
-            closeToast(toast);
-        }, getToastDuration(severity));
-    }
-
-    function closeToast(toast) {
-        if (toast.classList.contains('closing')) return;
-        toast.classList.add('closing');
-        toast.addEventListener(
-            'animationend',
-            () => toast.remove(), {
-                once: true
-            }
-        );
-    }
-
-    function showErrorMessage(message, severity = 'normal') {
-        showToast(message, severity);
-    }
-
-    function throwDownloadError(error) {
-        if (error instanceof Error) {
-            if (DOWNLOAD_ERROR_INDEX[error.message]) throw error;
-            throw new Error(DOWNLOAD_ERROR_MAP.UNKNOWN_ERROR.code);
-        }
-        if (error?.code) throw new Error(error.code);
-        if (typeof error === 'string' && DOWNLOAD_ERROR_MAP[error]) {
-            throw new Error(DOWNLOAD_ERROR_MAP[error].code);
-        }
-        if (typeof error === 'string' && DOWNLOAD_ERROR_INDEX[error]) throw new Error(error);
-        throw new Error(DOWNLOAD_ERROR_MAP.UNKNOWN_ERROR.code);
-    }
-
-    function handleDownloadError(error) {
-        const known = DOWNLOAD_ERROR_INDEX[error?.message];
-        if (known) {
-            showErrorMessage(
-                known.message,
-                known.severity
-            );
-            return;
-        }
-        console.debug(`${SCRIPT_NAME_DEBUG} v${SCRIPT_VERSION} - DOWNLOAD ERROR OCCURRED, SEE CONSOLE BELOW\n`, error);
-        showErrorMessage(
-            DOWNLOAD_ERROR_MAP.UNKNOWN_ERROR.message,
-            DOWNLOAD_ERROR_MAP.UNKNOWN_ERROR.severity
-        );
-    }
-
+    recordConsoleHistory();
     window.addEventListener('load', init);
 
 })();
