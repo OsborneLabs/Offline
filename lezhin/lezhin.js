@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Offline for Lezhin
 // @namespace    https://github.com/OsborneLabs
-// @version      3.1.0
+// @version      3.1.1
 // @description  Downloads and saves Lezhin chapter images to a PDF or ZIP file for offline reading
 // @author       Osborne Labs
 // @license      GPL-3.0-only
@@ -442,7 +442,7 @@
                 position: fixed;
                 z-index: 9998;
                 min-width: 400px;
-                max-width: 500px;
+                max-width: 500px !important;
                 padding: 16px;
                 border-radius: 20px;
                 color: white;
